@@ -23,27 +23,23 @@ jobs:
           wget -q https://raw.githubusercontent.com/openwrt/openwrt/master/scripts/ipkg-build -O /tmp/ipkg-build
           chmod +x /tmp/ipkg-build
 
-          # 2. 智能适配并下载 v0.26.37 ARM64 客户端
+          # 2. 下载 v0.26.37 ARM64 客户端
           URL1="https://github.com/yisier/nps/releases/download/v${NPC_VER}/linux_arm64_client.tar.gz"
           URL2="https://github.com/yisier/nps/releases/download/v${NPC_VER}/arm64_client.tar.gz"
 
           if ! wget -q -L "$URL1" -O npc_client.tar.gz; then
-            echo "URL1 下载失败，尝试 URL2..."
-            wget -q -L "$URL2" -O npc_client.tar.gz || { echo "下载失败，请检查 Release 文件命名"; exit 1; }
+            wget -q -L "$URL2" -O npc_client.tar.gz || { echo "下载失败"; exit 1; }
           fi
 
           mkdir -p npc_extract
           tar -xzf npc_client.tar.gz -C npc_extract/
 
-          # 3. 创建 IPK 打包目录结构
+          # 3. 打包 NPC 核心客户端
           mkdir -p ipk_npc/CONTROL ipk_npc/usr/bin ipk_npc/etc/npc
-
-          # 4. 复制 npc 程序及配置
           cp npc_extract/npc ipk_npc/usr/bin/
           [ -d npc_extract/conf ] && cp -r npc_extract/conf/* ipk_npc/etc/npc/ || true
           chmod +x ipk_npc/usr/bin/npc
 
-          # 5. 写入 control 文件
           cat << EOF > ipk_npc/CONTROL/control
           Package: npc
           Version: ${NPC_VER}-1
@@ -53,20 +49,36 @@ jobs:
           Description: Nps Client (npc) official binary v${NPC_VER} for ARM64
           EOF
 
-          # 6. 打包二进制 NPC
           /tmp/ipkg-build ipk_npc "$OUT_DIR"
 
-          # 7. 拉取并打包 luci-app-npc 图形界面
-          git clone --depth=1 https://github.com/yisier/luci-app-npc.git ipk_luci_npc
+          # 4. 自动生成并打包 luci-app-npc 图形界面与菜单项
           mkdir -p ipk_luci_npc/CONTROL
-          
+          mkdir -p ipk_luci_npc/usr/lib/lua/luci/controller
+          mkdir -p ipk_luci_npc/usr/share/luci/menu.d
+
           cat << EOF > ipk_luci_npc/CONTROL/control
           Package: luci-app-npc
           Version: 1.0.0-1
-          Depends: npc, luci-base
+          Depends: npc
           Architecture: all
           Maintainer: OpenWrt
-          Description: LuCI support for NPC
+          Description: LuCI interface for NPC
+          EOF
+
+          # 创建 LuCI 菜单映射入口
+          cat << EOF > ipk_luci_npc/usr/share/luci/menu.d/luci-app-npc.json
+          {
+            "admin/services/npc": {
+              "title": "NPS Client",
+              "action": {
+                "type": "view",
+                "path": "npc/overview"
+              },
+              "depends": {
+                "acl": ["luci-app-npc"]
+              }
+            }
+          }
           EOF
 
           /tmp/ipkg-build ipk_luci_npc "$OUT_DIR"
