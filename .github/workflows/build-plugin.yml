@@ -11,38 +11,44 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. 安装系统最新的 Go 环境 (1.25 及以上)
-      - name: Setup Go Environment
+      # 1. 配置 Node.js 环境（用于编译 FRP v0.70+ 的前端 Web 静态资源）
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 2. 配置 Go 1.25+ 环境
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '>=1.25.0'
 
       - name: Download OpenWrt SDK & Build FRP
         run: |
-          # 2. 下载并解压适配 Rockchip armv8 的官方 SDK
+          # 3. 下载并解压适配 Rockchip armv8 的官方 SDK
           wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           tar -xvf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           
-          # 3. 进入 SDK 目录
+          # 4. 进入 SDK 目录
           cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
 
-          # 4. 更新并安装官方 feeds
+          # 5. 更新并安装官方 feeds
           ./scripts/feeds update -a
-          ./scripts/feeds install frpc frps luci-app-frpc luci-i18n-frpc-zh-cn
+          ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 5. 修改 Makefile，将 FRP 版本号指定为 0.71.0
-          sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.71.0/' feeds/packages/net/frp/Makefile
-          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/net/frp/Makefile
+          # 6. 删除 SDK 预置的旧版 frp 源码
+          rm -rf feeds/packages/net/frp
 
-          # 6. 生成基础配置
+          # 7. 克隆专门适配了最新 FRP 的 OpenWrt 源码包并创建符号链接
+          git clone --depth=1 https://github.com/sbwml/openwrt-packages.git /tmp/openwrt-packages
+          cp -r /tmp/openwrt-packages/frp feeds/packages/net/frp
+          ./scripts/feeds install frpc frps
+
+          # 8. 解除 Go 工具链锁定
+          find feeds/packages/lang/golang/ -type f -exec sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' {} + || true
+
+          # 9. 生成配置并编译最新 FRP v0.71.0 及 LuCI 界面
           make defconfig
-
-          # 7. 全局覆盖 OpenWrt 编译 Go 时硬编码的 GOTOOLCHAIN 参数
-          # 将 GOTOOLCHAIN=local 强制替换为 GOTOOLCHAIN=auto，允许 Go 自动使用/升级工具链
-          find feeds/packages/lang/golang/ -type f -exec sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' {} +
-          find include/ -type f -exec sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' {} + || true
-
-          # 8. 编译最新版 frp 及界面 (在 make 命令层强行传入环境变量)
           GOTOOLCHAIN=auto PATH=$(which go):$PATH make package/feeds/packages/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
 
