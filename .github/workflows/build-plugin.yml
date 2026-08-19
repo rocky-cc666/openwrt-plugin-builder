@@ -11,52 +11,40 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. 配置 Go 环境
-      - name: Setup Go Environment
-        uses: actions/setup-go@v5
-        with:
-          go-version: '>=1.25.0'
-
-      - name: Download OpenWrt SDK & Build FRP
+      - name: Build FRP v0.71.0 IPK Package
         run: |
-          # 2. 下载并解压适配 Rockchip armv8 的官方 SDK
-          wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          tar -xvf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          FRP_VER="0.71.0"
           
-          # 3. 进入 SDK 目录
-          cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
+          # 1. 下载 FRP 官方 0.71.0 aarch64 架构二进制文件
+          wget -q https://github.com/fatedier/frp/releases/download/v${FRP_VER}/frp_${FRP_VER}_linux_arm64.tar.gz
+          tar -xzf frp_${FRP_VER}_linux_arm64.tar.gz
 
-          # 4. 更新并安装官方 feeds 依赖（确保索引完整）
-          ./scripts/feeds update -a
-          ./scripts/feeds install frpc frps luci-app-frpc luci-i18n-frpc-zh-cn
+          # 2. 创建 IPK 打包目录结构
+          mkdir -p ipk_build/CONTROL
+          mkdir -p ipk_build/usr/bin
+          mkdir -p ipk_build/etc/init.d
+          mkdir -p output
 
-          # 5. 修改 feeds/packages/net/frp/Makefile 升至 v0.71.0
-          sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.71.0/' feeds/packages/net/frp/Makefile
-          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/net/frp/Makefile
+          # 3. 复制二进制文件
+          cp frp_${FRP_VER}_linux_arm64/frpc ipk_build/usr/bin/
+          cp frp_${FRP_VER}_linux_arm64/frps ipk_build/usr/bin/
+          chmod +x ipk_build/usr/bin/*
 
-          # 6. 解除 SDK 对 Go 工具链的锁定
-          find feeds/packages/lang/golang/ -type f -exec sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' {} + || true
+          # 4. 写入 OpenWrt 控制描述文件 (Control File)
+          cat << EOF > ipk_build/CONTROL/control
+          Package: frp
+          Version: ${FRP_VER}-1
+          Depends: libc
+          Architecture: aarch64_generic
+          Maintainer: OpenWrt
+          Description: A fast reverse proxy (v0.71.0 official binary for Rockchip/ARM64)
+          EOF
 
-          # 7. 在 Go 编译前先下载 FRP v0.71.0 官方源码并手动补全缺失的 web/frpc/dist 和 web/frps/dist 静态资源目录
-          make defconfig
-          make package/feeds/packages/frp/prepare V=s
-          
-          # 提取官方 Release 包中的 dist 静态目录填充进编译目录，解决 embed.go 找不到 dist 的问题
-          FRP_BUILD_DIR=$(find build_dir/target-aarch64_generic_musl/ -maxdepth 1 -name "frp-0.71.0*" | head -n 1)
-          if [ -n "$FRP_BUILD_DIR" ]; then
-            mkdir -p /tmp/frp_official
-            wget -qO- https://github.com/fatedier/frp/releases/download/v0.71.0/frp_0.71.0_linux_amd64.tar.gz | tar -xz -C /tmp/frp_official --strip-components=1
-            mkdir -p "$FRP_BUILD_DIR/web/frpc/dist" "$FRP_BUILD_DIR/web/frps/dist"
-            echo "<html><body>FRP Web Console</body></html>" > "$FRP_BUILD_DIR/web/frpc/dist/index.html"
-            echo "<html><body>FRP Web Console</body></html>" > "$FRP_BUILD_DIR/web/frps/dist/index.html"
-          fi
-
-          # 8. 执行最终编译
-          GOTOOLCHAIN=auto PATH=$(which go):$PATH make package/feeds/packages/frp/compile V=s
-          make package/feeds/luci/luci-app-frpc/compile V=s
+          # 5. 打包为 OpenWrt .ipk 安装包
+          dpkg-deb -b --root-owner-group ipk_build output/frp_${FRP_VER}-1_aarch64_generic.ipk
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-frp-v0.71.0-packages
-          path: openwrt-sdk-*/bin/packages/
+          name: openwrt-frp-v0.71.0-ipk
+          path: output/*.ipk
