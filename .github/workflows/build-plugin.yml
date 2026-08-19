@@ -11,7 +11,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. 配置 Node.js 环境（用于编译 FRP v0.70+ 的前端 Web 静态资源）
+      # 1. 配置 Node.js 环境（用于构建 FRP 0.70+ 前端界面）
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -25,7 +25,7 @@ jobs:
 
       - name: Download OpenWrt SDK & Build FRP
         run: |
-          # 3. 下载并解压适配 Rockchip armv8 的官方 SDK
+          # 3. 下载并解压适配 Rockchip armv8 (NanoPi R2S / Radxa E20C) 的官方 SDK
           wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           tar -xvf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           
@@ -34,20 +34,16 @@ jobs:
 
           # 5. 更新并安装官方 feeds
           ./scripts/feeds update -a
-          ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
+          ./scripts/feeds install frpc frps luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 6. 删除 SDK 预置的旧版 frp 源码
-          rm -rf feeds/packages/net/frp
+          # 6. 下载最新的 FRP v0.71.0 Makefile 并替换官方旧定义
+          wget -O feeds/packages/net/frp/Makefile https://raw.githubusercontent.com/sbwml/openwrt-packages/master/openwrt-23.05/frp/Makefile || \
+          wget -O feeds/packages/net/frp/Makefile https://raw.githubusercontent.com/sbwml/openwrt-packages/main/frp/Makefile
 
-          # 7. 克隆专门适配了最新 FRP 的 OpenWrt 源码包并创建符号链接
-          git clone --depth=1 https://github.com/sbwml/openwrt-packages.git /tmp/openwrt-packages
-          cp -r /tmp/openwrt-packages/frp feeds/packages/net/frp
-          ./scripts/feeds install frpc frps
-
-          # 8. 解除 Go 工具链锁定
+          # 7. 解除 SDK 对 Go 工具链的锁定
           find feeds/packages/lang/golang/ -type f -exec sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' {} + || true
 
-          # 9. 生成配置并编译最新 FRP v0.71.0 及 LuCI 界面
+          # 8. 生成配置并编译最新 FRP v0.71.0 及 LuCI 界面
           make defconfig
           GOTOOLCHAIN=auto PATH=$(which go):$PATH make package/feeds/packages/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
