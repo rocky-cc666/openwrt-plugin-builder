@@ -1,7 +1,7 @@
-name: Build OpenWrt Plugin
+name: Build OpenWrt FRP Plugin
 
 on:
-  workflow_dispatch: # 支持在 GitHub 后台手动点击按钮触发编译
+  workflow_dispatch:
 
 jobs:
   build:
@@ -14,25 +14,29 @@ jobs:
       - name: Setup Building Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential ccache gettext git libncurses5-dev xsltproc
+          sudo apt-get install -y build-essential ccache gettext git libncurses5-dev xsltproc golang
 
-      - name: Download OpenWrt SDK & Build
+      - name: Download OpenWrt SDK & Build FRP
         run: |
-          # 1. 下载对应的 OpenWrt SDK (此处以官方 23.05.0 x86_64 为例)
-          wget https://downloads.openwrt.org/releases/23.05.0/targets/x86/64/openwrt-sdk-23.05.0-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          # 1. 下载适用于 NanoPi R2S (aarch64) 的 OpenWrt 23.05 SDK
+          wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           tar -xvf openwrt-sdk-*.tar.xz
           cd openwrt-sdk-*
 
-          # 2. 拉取你需要编译的插件源码 (请将下方 Git 地址替换为你需要的插件地址)
-          git clone https://github.com/openwrt/packages.git package/my-plugin
-
-          # 3. 更新依赖并开始编译
+          # 2. 更新并安装基础依赖
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          make package/my-plugin/compile V=s
+
+          # 3. 拉取 FRP 客户端及其 Web 界面源码
+          git clone https://github.com/kuoruan/openwrt-frp.git package/openwrt-frp
+          git clone https://github.com/kuoruan/luci-app-frpc.git package/luci-app-frpc
+
+          # 4. 编译 frpc 及 luci-app-frpc
+          make package/openwrt-frp/compile V=s
+          make package/luci-app-frpc/compile V=s
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-ipk-packages
+          name: openwrt-frp-ipk
           path: openwrt-sdk-*/bin/packages/
