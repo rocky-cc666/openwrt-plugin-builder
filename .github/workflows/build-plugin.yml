@@ -11,7 +11,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. 强制安装并切换到最新的 Go 环境 (1.25 及以上)
+      # 1. 安装最新版 Go 环境 (>=1.25.0)
       - name: Setup Go Environment
         uses: actions/setup-go@v5
         with:
@@ -30,15 +30,15 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install frpc frps luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 5. 修改 Makefile，强制指定 FRP 版本为 0.71.0
+          # 5. 修改 Makefile，指定 FRP 版本为 0.71.0
           sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.71.0/' feeds/packages/net/frp/Makefile
           sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/net/frp/Makefile
 
-          # 6. 设置 Go 允许自动下载和更新工具链
-          export GOTOOLCHAIN=auto
-          export PATH=$(which go):$PATH
+          # 6. 解除 OpenWrt SDK 对 Golang 工具链的锁死限制
+          sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' feeds/packages/lang/golang/golang-build.mk || true
+          find . -name "golang-build.sh" -exec sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' {} + || true
 
-          # 7. 生成配置文件并编译最新版 frp 及界面
+          # 7. 生成配置文件并执行编译
           make defconfig
           make package/feeds/packages/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
