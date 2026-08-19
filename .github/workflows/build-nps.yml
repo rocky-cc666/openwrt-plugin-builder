@@ -11,7 +11,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Build NPC v0.26.10 IPK Packages
+      - name: Build NPC v0.26.10 IPK Package
         run: |
           NPC_VER="0.26.10"
           
@@ -31,9 +31,9 @@ jobs:
           # 3. 创建 IPK 打包目录结构
           mkdir -p ipk_npc/CONTROL ipk_npc/usr/bin ipk_npc/etc/npc
 
-          # 4. 复制 npc 二进制程序及配置文件
+          # 4. 复制 npc 二进制程序及默认配置文件
           cp npc_extract/npc ipk_npc/usr/bin/
-          cp -r npc_extract/conf/* ipk_npc/etc/npc/ 2>/dev/null || true
+          [ -d npc_extract/conf ] && cp -r npc_extract/conf/* ipk_npc/etc/npc/ || true
           chmod +x ipk_npc/usr/bin/npc
 
           # 5. 写入 OpenWrt control 描述文件
@@ -49,18 +49,8 @@ jobs:
           # 6. 使用 ipkg-build 生成 IPK 安装包
           /tmp/ipkg-build ipk_npc "$OUT_DIR"
 
-          # 7. 编译 LuCI Web 界面 (luci-app-nps / luci-app-npc)
-          wget -q https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          tar -xf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
-          ./scripts/feeds update -a
-          ./scripts/feeds install luci-app-npc luci-i18n-npc-zh-cn || ./scripts/feeds install luci-app-nps luci-i18n-nps-zh-cn || true
-          make defconfig
-          make package/feeds/luci/luci-app-npc/compile V=s || make package/feeds/luci/luci-app-nps/compile V=s || true
-          find bin/packages/ -name "*npc*.ipk" -o -name "*nps*.ipk" | xargs -i cp {} "$OUT_DIR"/ 2>/dev/null || true
-
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-npc-v0.26.10-packages
+          name: openwrt-npc-v0.26.10-package
           path: output/*.ipk
