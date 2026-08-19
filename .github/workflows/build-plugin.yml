@@ -1,4 +1,4 @@
-name: Build OpenWrt FRP Plugin (25.12.5)
+name: Build OpenWrt FRP Plugin
 
 on:
   workflow_dispatch:
@@ -13,21 +13,21 @@ jobs:
 
       - name: Download OpenWrt SDK & Build FRP
         run: |
-          # 1. 下载并解压适配 25.12.5 (Rockchip armv8) 的官方 SDK
-          wget https://downloads.openwrt.org/releases/25.12.5/targets/rockchip/armv8/openwrt-sdk-25.12.5-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz
-          tar -xvf openwrt-sdk-25.12.5-*.tar.xz
+          # 1. 下载并解压适配 Rockchip armv8 (NanoPi R2S / Radxa E20C) 的官方 SDK
+          wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          tar -xvf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           
-          # 2. 精确进入 SDK 目录
-          cd openwrt-sdk-25.12.5-*
+          # 2. 进入 SDK 目录
+          cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
 
           # 3. 更新并安装基础 feeds 依赖
           ./scripts/feeds update -a
           ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 4. 拉取第三方全量包，引入 FRP v0.71.0 源码
+          # 4. 拉取第三方全量包，引入 FRP v0.71.0 最新源码
           git clone https://github.com/sbwml/openwrt-packages.git package/openwrt-packages
           
-          # 5. 生成配置文件并编译
+          # 5. 生成配置文件并编译最新版 frp 及界面
           make defconfig
           make package/openwrt-packages/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
@@ -35,5 +35,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-25.12.5-frp-packages
+          name: openwrt-frp-v0.71.0-packages
           path: openwrt-sdk-*/bin/packages/
