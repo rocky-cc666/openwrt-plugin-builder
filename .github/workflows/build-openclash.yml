@@ -1,4 +1,4 @@
-name: Build OpenClash Plugin for R2S/E20C
+name: Build OpenClash Plugin
 
 on:
   workflow_dispatch:
