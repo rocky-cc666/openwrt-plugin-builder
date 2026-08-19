@@ -11,7 +11,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. 配置系统 Go 1.25+ 环境
+      # 1. 配置 Node.js 环境（用于 FRP Web 前端构建）
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 2. 配置 Go 1.25+ 环境
       - name: Setup Go Environment
         uses: actions/setup-go@v5
         with:
@@ -19,28 +25,29 @@ jobs:
 
       - name: Download OpenWrt SDK & Build FRP
         run: |
-          # 2. 下载并解压适配 Rockchip armv8 (NanoPi R2S / Radxa E20C) 的官方 SDK
+          # 3. 下载并解压适配 Rockchip armv8 的官方 SDK
           wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           tar -xvf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           
-          # 3. 进入 SDK 目录
+          # 4. 进入 SDK 目录
           cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
 
-          # 4. 更新并安装官方 feeds
+          # 5. 更新并安装官方 feeds 依赖
           ./scripts/feeds update -a
-          ./scripts/feeds install frpc frps luci-app-frpc luci-i18n-frpc-zh-cn
+          ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 5. 修改官方 Makefile 升至 v0.71.0 并跳过哈希校验
-          sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.71.0/' feeds/packages/net/frp/Makefile
-          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/net/frp/Makefile
+          # 6. 删除 SDK 自带的旧版 frp，并引入支持高版本 Web 编译的源码定义
+          rm -rf feeds/packages/net/frp
+          svn export https://github.com/sbwml/openwrt-packages/trunk/openwrt-23.05/frp feeds/packages/net/frp || \
+          git clone --depth=1 -b openwrt-23.05 https://github.com/sbwml/openwrt-packages.git /tmp/pkg && cp -r /tmp/pkg/frp feeds/packages/net/frp
 
-          # 6. 解除 Go 工具链对于 local 的锁死限制
+          ./scripts/feeds install frpc frps
+
+          # 7. 解除 SDK 对 Go 工具链的锁定
           find feeds/packages/lang/golang/ -type f -exec sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' {} + || true
 
-          # 7. 生成默认编译配置
+          # 8. 生成默认配置并编译
           make defconfig
-
-          # 8. 编译 FRP 二进制包以及 LuCI 界面
           GOTOOLCHAIN=auto PATH=$(which go):$PATH make package/feeds/packages/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
 
