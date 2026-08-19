@@ -11,7 +11,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. 安装最新版 Go 环境 (>=1.25.0)
+      # 1. 安装最新的 Go 环境 (1.25 及以上)
       - name: Setup Go Environment
         uses: actions/setup-go@v5
         with:
@@ -34,12 +34,17 @@ jobs:
           sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.71.0/' feeds/packages/net/frp/Makefile
           sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/net/frp/Makefile
 
-          # 6. 解除 OpenWrt SDK 对 Golang 工具链的锁死限制
-          sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' feeds/packages/lang/golang/golang-build.mk || true
-          find . -name "golang-build.sh" -exec sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' {} + || true
-
-          # 7. 生成配置文件并执行编译
+          # 6. 先执行一次 make defconfig，生成 staging_dir 工具链路径
           make defconfig
+
+          # 7. 找到 SDK 编译使用的 Go 路径，强制用系统最新 Go 进行替换
+          GO_SYS_BIN=$(which go)
+          find staging_dir/ -name "go" -type f -path "*/host/bin/*" | while read -r go_path; do
+            rm -f "$go_path"
+            ln -s "$GO_SYS_BIN" "$go_path"
+          done
+
+          # 8. 编译最新版 frp 及界面
           make package/feeds/packages/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
 
