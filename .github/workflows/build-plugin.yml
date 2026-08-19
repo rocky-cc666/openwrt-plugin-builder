@@ -11,24 +11,34 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # 1. 强制安装并切换到最新的 Go 环境 (1.25 及以上)
+      - name: Setup Go Environment
+        uses: actions/setup-go@v5
+        with:
+          go-version: '>=1.25.0'
+
       - name: Download OpenWrt SDK & Build FRP
         run: |
-          # 1. 下载并解压适配 Rockchip armv8 (NanoPi R2S / Radxa E20C) 的官方 SDK
+          # 2. 下载并解压适配 Rockchip armv8 (NanoPi R2S / Radxa E20C) 的官方 SDK
           wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           tar -xvf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           
-          # 2. 进入 SDK 目录
+          # 3. 进入 SDK 目录
           cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
 
-          # 3. 更新并安装官方 feeds 依赖
+          # 4. 更新并安装官方 feeds 依赖
           ./scripts/feeds update -a
           ./scripts/feeds install frpc frps luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 4. 修改 Makefile，将 FRP 强制指定更新为 v0.71.0
+          # 5. 修改 Makefile，强制指定 FRP 版本为 0.71.0
           sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.71.0/' feeds/packages/net/frp/Makefile
           sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/net/frp/Makefile
 
-          # 5. 生成配置文件并编译最新版 frp 及界面
+          # 6. 设置 Go 允许自动下载和更新工具链
+          export GOTOOLCHAIN=auto
+          export PATH=$(which go):$PATH
+
+          # 7. 生成配置文件并编译最新版 frp 及界面
           make defconfig
           make package/feeds/packages/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
