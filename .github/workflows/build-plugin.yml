@@ -14,7 +14,11 @@ jobs:
       - name: Build FRP v0.71.0 IPK Packages
         run: |
           FRP_VER="0.71.0"
-          mkdir -p output
+          
+          # 创建输出绝对路径，彻底避免 ipkg-build 找不到目录
+          WORK_DIR=$(pwd)
+          OUT_DIR="${WORK_DIR}/output"
+          mkdir -p "$OUT_DIR"
 
           # 1. 下载 OpenWrt 官方 ipkg-build 打包脚本
           wget -q https://raw.githubusercontent.com/openwrt/openwrt/master/scripts/ipkg-build -O /tmp/ipkg-build
@@ -38,7 +42,7 @@ jobs:
           Description: A fast reverse proxy client (v0.71.0 official binary for ARM64)
           EOF
 
-          /tmp/ipkg-build ipk_frpc output/
+          /tmp/ipkg-build ipk_frpc "$OUT_DIR"
 
           # --- 打包 frps (服务端) ---
           mkdir -p ipk_frps/CONTROL ipk_frps/usr/bin
@@ -54,7 +58,7 @@ jobs:
           Description: A fast reverse proxy server (v0.71.0 official binary for ARM64)
           EOF
 
-          /tmp/ipkg-build ipk_frps output/
+          /tmp/ipkg-build ipk_frps "$OUT_DIR"
 
           # 3. 提取编译 LuCI 网页界面 (luci-app-frpc & 中文语言包)
           wget -q https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
@@ -64,7 +68,7 @@ jobs:
           ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
           make defconfig
           make package/feeds/luci/luci-app-frpc/compile V=s
-          find bin/packages/ -name "luci-app-frpc*.ipk" -o -name "luci-i18n-frpc-zh-cn*.ipk" | xargs -i cp {} ../output/
+          find bin/packages/ -name "luci-app-frpc*.ipk" -o -name "luci-i18n-frpc-zh-cn*.ipk" | xargs -i cp {} "$OUT_DIR"/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
