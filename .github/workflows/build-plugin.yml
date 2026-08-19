@@ -24,12 +24,13 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 4. 拉取第三方全量包，引入 FRP v0.71.0 最新源码
-          git clone https://github.com/sbwml/openwrt-packages.git package/openwrt-packages
+          # 4. 拉取第三方全量包，提取最新 FRP 源码到 package/ 目录
+          git clone --depth=1 https://github.com/sbwml/openwrt-packages.git /tmp/openwrt-packages
+          cp -r /tmp/openwrt-packages/frp package/frp
           
-          # 5. 生成配置文件并编译最新版 frp 及界面
+          # 5. 生成配置文件并强行指定编译
           make defconfig
-          make package/openwrt-packages/frp/compile V=s
+          make package/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
 
       - name: Upload Artifact
