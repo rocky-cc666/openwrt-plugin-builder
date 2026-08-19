@@ -20,17 +20,17 @@ jobs:
           # 2. 进入 SDK 目录
           cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
 
-          # 3. 更新并安装基础 feeds 依赖
+          # 3. 更新并安装官方 feeds 依赖
           ./scripts/feeds update -a
-          ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
+          ./scripts/feeds install frpc frps luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 4. 拉取第三方全量包，提取最新 FRP 源码到 package/ 目录
-          git clone --depth=1 https://github.com/sbwml/openwrt-packages.git /tmp/openwrt-packages
-          cp -r /tmp/openwrt-packages/frp package/frp
-          
-          # 5. 生成配置文件并强行指定编译
+          # 4. 修改 Makefile，将 FRP 强制指定更新为 v0.71.0
+          sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.71.0/' feeds/packages/net/frp/Makefile
+          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/net/frp/Makefile
+
+          # 5. 生成配置文件并编译最新版 frp 及界面
           make defconfig
-          make package/frp/compile V=s
+          make package/feeds/packages/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
 
       - name: Upload Artifact
