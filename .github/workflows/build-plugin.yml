@@ -18,25 +18,21 @@ jobs:
 
       - name: Download OpenWrt SDK & Build FRP
         run: |
-          # 1. 下载适用于 NanoPi R2S (aarch64) 的 OpenWrt 23.05 SDK
+          # 1. 下载适用于 NanoPi R2S (aarch64) 的 OpenWrt SDK
           wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           tar -xvf openwrt-sdk-*.tar.xz
           cd openwrt-sdk-*
 
-          # 2. 更新并安装基础依赖
+          # 2. 更新并安装官方全量 feeds 软件包源
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          ./scripts/feeds install frpc luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 3. 拉取 FRP 客户端及其 Web 界面源码
-          git clone https://github.com/kuoruan/openwrt-frp.git package/openwrt-frp
-          git clone https://github.com/kuoruan/luci-app-frpc.git package/luci-app-frpc
-
-          # 4. 编译 frpc 及 luci-app-frpc
-          make package/openwrt-frp/compile V=s
-          make package/luci-app-frpc/compile V=s
+          # 3. 编译官方源中的 frpc 和后台 Web 界面
+          make package/feeds/packages/frp/compile V=s
+          make package/feeds/luci/luci-app-frpc/compile V=s
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-frp-ipk
+          name: openwrt-frp-packages
           path: openwrt-sdk-*/bin/packages/
