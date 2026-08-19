@@ -16,7 +16,7 @@ jobs:
           FRP_VER="0.71.0"
           mkdir -p output
 
-          # 1. 下载并安装 OpenWrt 官方 ipkg-build 打包工具
+          # 1. 下载 OpenWrt 官方 ipkg-build 打包脚本
           wget -q https://raw.githubusercontent.com/openwrt/openwrt/master/scripts/ipkg-build -O /tmp/ipkg-build
           chmod +x /tmp/ipkg-build
 
@@ -25,7 +25,7 @@ jobs:
           tar -xzf frp_${FRP_VER}_linux_arm64.tar.gz
 
           # --- 打包 frpc (客户端) ---
-          mkdir -p ipk_frpc/CONTROL ipk_frpc/usr/bin ipk_frpc/etc/config ipk_frpc/etc/init.d
+          mkdir -p ipk_frpc/CONTROL ipk_frpc/usr/bin
           cp frp_${FRP_VER}_linux_arm64/frpc ipk_frpc/usr/bin/
           chmod +x ipk_frpc/usr/bin/frpc
 
@@ -38,7 +38,7 @@ jobs:
           Description: A fast reverse proxy client (v0.71.0 official binary for ARM64)
           EOF
 
-          /tmp/ipkg-build -o root -g root ipk_frpc output/
+          /tmp/ipkg-build ipk_frpc output/
 
           # --- 打包 frps (服务端) ---
           mkdir -p ipk_frps/CONTROL ipk_frps/usr/bin
@@ -54,17 +54,17 @@ jobs:
           Description: A fast reverse proxy server (v0.71.0 official binary for ARM64)
           EOF
 
-          /tmp/ipkg-build -o root -g root ipk_frps output/
+          /tmp/ipkg-build ipk_frps output/
 
           # 3. 提取编译 LuCI 网页界面 (luci-app-frpc & 中文语言包)
-          wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          wget -q https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           tar -xf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
           ./scripts/feeds update -a
           ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
           make defconfig
           make package/feeds/luci/luci-app-frpc/compile V=s
-          cp $(find bin/packages/ -name "luci-app-frpc*.ipk" -o -name "luci-i18n-frpc-zh-cn*.ipk") ../output/
+          find bin/packages/ -name "luci-app-frpc*.ipk" -o -name "luci-i18n-frpc-zh-cn*.ipk" | xargs -i cp {} ../output/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
