@@ -1,0 +1,38 @@
+name: Build OpenWrt Plugin
+
+on:
+  workflow_dispatch: # 支持在 GitHub 后台手动点击按钮触发编译
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Building Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache gettext git libncurses5-dev xsltproc
+
+      - name: Download OpenWrt SDK & Build
+        run: |
+          # 1. 下载对应的 OpenWrt SDK (此处以官方 23.05.0 x86_64 为例)
+          wget https://downloads.openwrt.org/releases/23.05.0/targets/x86/64/openwrt-sdk-23.05.0-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          tar -xvf openwrt-sdk-*.tar.xz
+          cd openwrt-sdk-*
+
+          # 2. 拉取你需要编译的插件源码 (请将下方 Git 地址替换为你需要的插件地址)
+          git clone https://github.com/openwrt/packages.git package/my-plugin
+
+          # 3. 更新依赖并开始编译
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make package/my-plugin/compile V=s
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-ipk-packages
+          path: openwrt-sdk-*/bin/packages/
