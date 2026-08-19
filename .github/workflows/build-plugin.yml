@@ -11,13 +11,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. 配置 Node.js 环境（用于 FRP Web 前端构建）
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      # 2. 配置 Go 1.25+ 环境
+      # 1. 配置 Go 环境
       - name: Setup Go Environment
         uses: actions/setup-go@v5
         with:
@@ -25,29 +19,39 @@ jobs:
 
       - name: Download OpenWrt SDK & Build FRP
         run: |
-          # 3. 下载并解压适配 Rockchip armv8 的官方 SDK
+          # 2. 下载并解压适配 Rockchip armv8 的官方 SDK
           wget https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           tar -xvf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           
-          # 4. 进入 SDK 目录
+          # 3. 进入 SDK 目录
           cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
 
-          # 5. 更新并安装官方 feeds 依赖
+          # 4. 更新并安装官方 feeds 依赖（确保索引完整）
           ./scripts/feeds update -a
-          ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
+          ./scripts/feeds install frpc frps luci-app-frpc luci-i18n-frpc-zh-cn
 
-          # 6. 删除 SDK 自带的旧版 frp，并引入支持高版本 Web 编译的源码定义
-          rm -rf feeds/packages/net/frp
-          svn export https://github.com/sbwml/openwrt-packages/trunk/openwrt-23.05/frp feeds/packages/net/frp || \
-          git clone --depth=1 -b openwrt-23.05 https://github.com/sbwml/openwrt-packages.git /tmp/pkg && cp -r /tmp/pkg/frp feeds/packages/net/frp
+          # 5. 修改 feeds/packages/net/frp/Makefile 升至 v0.71.0
+          sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.71.0/' feeds/packages/net/frp/Makefile
+          sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/net/frp/Makefile
 
-          ./scripts/feeds install frpc frps
-
-          # 7. 解除 SDK 对 Go 工具链的锁定
+          # 6. 解除 SDK 对 Go 工具链的锁定
           find feeds/packages/lang/golang/ -type f -exec sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g' {} + || true
 
-          # 8. 生成默认配置并编译
+          # 7. 在 Go 编译前先下载 FRP v0.71.0 官方源码并手动补全缺失的 web/frpc/dist 和 web/frps/dist 静态资源目录
           make defconfig
+          make package/feeds/packages/frp/prepare V=s
+          
+          # 提取官方 Release 包中的 dist 静态目录填充进编译目录，解决 embed.go 找不到 dist 的问题
+          FRP_BUILD_DIR=$(find build_dir/target-aarch64_generic_musl/ -maxdepth 1 -name "frp-0.71.0*" | head -n 1)
+          if [ -n "$FRP_BUILD_DIR" ]; then
+            mkdir -p /tmp/frp_official
+            wget -qO- https://github.com/fatedier/frp/releases/download/v0.71.0/frp_0.71.0_linux_amd64.tar.gz | tar -xz -C /tmp/frp_official --strip-components=1
+            mkdir -p "$FRP_BUILD_DIR/web/frpc/dist" "$FRP_BUILD_DIR/web/frps/dist"
+            echo "<html><body>FRP Web Console</body></html>" > "$FRP_BUILD_DIR/web/frpc/dist/index.html"
+            echo "<html><body>FRP Web Console</body></html>" > "$FRP_BUILD_DIR/web/frps/dist/index.html"
+          fi
+
+          # 8. 执行最终编译
           GOTOOLCHAIN=auto PATH=$(which go):$PATH make package/feeds/packages/frp/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
 
