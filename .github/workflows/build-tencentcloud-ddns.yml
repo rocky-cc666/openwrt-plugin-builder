@@ -24,66 +24,25 @@ jobs:
     - name: 检出仓库源码
       uses: actions/checkout@v4
 
-    - name: 初始化编译环境
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential clang flex bison gawk gettext git \
-          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl python3
-
-    - name: 下载并解压 OpenWrt SDK (.apk 兼容版)
-      run: |
-        # 使用 Python 提取官方 Snapshots 页面中真实存在的最新 SDK 文件全名
-        SDK_FILENAME=$(python3 -c "
-        import urllib.request, re
-        url = 'https://downloads.openwrt.org/snapshots/targets/${{ matrix.target }}/${{ matrix.subtarget }}/'
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        try:
-            with urllib.request.urlopen(req) as resp:
-                html = resp.read().decode('utf-8')
-                matches = re.findall(r'openwrt-sdk-[a-zA-Z0-9_-]+\.tar\.xz', html)
-                if matches:
-                    print(matches[0])
-        except Exception as e:
-            pass
-        ")
-
-        if [ -z "$SDK_FILENAME" ]; then
-          echo "错误：无法在官方页面提取到真实的 SDK 文件名！"
-          exit 1
-        fi
-
-        SDK_URL="https://downloads.openwrt.org/snapshots/targets/${{ matrix.target }}/${{ matrix.subtarget }}/${SDK_FILENAME}"
-        echo "成功匹配到最新 SDK 地址: $SDK_URL"
-
-        # 下载 SDK
-        curl -fL -A "Mozilla/5.0" "$SDK_URL" -o openwrt-sdk.tar.xz
-
-        # 校验文件格式并解压
-        mkdir -p sdk
-        tar -xJf openwrt-sdk.tar.xz -C sdk --strip-components=1
-        rm openwrt-sdk.tar.xz
-
-    - name: 载入插件源码与依赖
-      run: |
-        cd sdk
-        # 将当前仓库的插件源码复制到 package 目录
-        mkdir -p package/tencentcloud-ddns
-        cp -r ../* package/tencentcloud-ddns/ 2>/dev/null || true
-        
-        # 更新并安装 feeds
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+    - name: 自动配置 OpenWrt SDK
+      uses: openwrt/gh-action-sdk@v1
+      with:
+        arch: ${{ matrix.target }}-${{ matrix.subtarget }}
+        # 使用支持 .apk 包格式的最新开发分支/主干版本
+        ver: SNAPSHOT
 
     - name: 编译插件 (.apk)
       run: |
-        cd sdk
-        make defconfig
-        # 编译生成 apk 格式的安装包
+        # 将当前插件源码复制到 SDK 的 package 目录内
+        mkdir -p bin/targets/${{ matrix.target }}/${{ matrix.subtarget }}
+        cp -r $GITHUB_WORKSPACE package/tencentcloud-ddns
+
+        # 编译包
         make package/tencentcloud-ddns/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk 安装包
       uses: actions/upload-artifact@v4
       with:
         name: tencentcloud-ddns-${{ matrix.target }}-${{ matrix.subtarget }}-apk
-        # 匹配编译出来的 .apk 格式文件
-        path: sdk/bin/packages/${{ matrix.target }}/base/*.apk
+        # 上传生成的 .apk 格式安装包
+        path: bin/packages/${{ matrix.target }}/base/*.apk
