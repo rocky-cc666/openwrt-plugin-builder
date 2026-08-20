@@ -23,14 +23,11 @@ jobs:
           libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl zstd \
           python3-pyelftools python3-pip swig
 
-    - name: 精确下载并解压官方 SDK (.apk 格式)
+    - name: 下载并解压官方 SDK (.apk 格式)
       run: |
         BASE_URL="https://downloads.openwrt.org/releases/25.12.5/targets/rockchip/armv8"
         
-        # 1. 下载官方校验码文件
         curl -sL "$BASE_URL/sha256sums" -o sha256sums
-        
-        # 2. 全格式正则提取 SDK 文件名 (支持 .tar.xz, .tar.zst, .tar.gz, .tar.bz2)
         SDK_FILE=$(grep -oE 'openwrt-sdk-[a-zA-Z0-9_.-]+\.tar\.(xz|zst|gz|bz2)' sha256sums | head -n 1)
         
         if [ -z "$SDK_FILE" ]; then
@@ -39,13 +36,9 @@ jobs:
           exit 1
         fi
 
-        echo "成功定位 SDK 文件: $SDK_FILE"
-        SDK_URL="$BASE_URL/$SDK_FILE"
+        echo "定位到 SDK 文件: $SDK_FILE"
+        curl -fL -A "Mozilla/5.0" "$BASE_URL/$SDK_FILE" -o openwrt-sdk.archive
 
-        # 3. 下载 SDK 压缩包
-        curl -fL -A "Mozilla/5.0" "$SDK_URL" -o openwrt-sdk.archive
-
-        # 4. 根据实际压缩类型自动解压
         mkdir -p sdk
         if [[ "$SDK_FILE" == *.tar.zst ]]; then
           tar --zstd -xf openwrt-sdk.archive -C sdk --strip-components=1
@@ -57,55 +50,44 @@ jobs:
 
         rm openwrt-sdk.archive sha256sums
 
-    - name: 载入插件源码与依赖
+    - name: 自动对齐包名并配置编译
       run: |
         cd sdk
         
-        # 1. 在当前项目中寻找包含 OpenWrt Makefile 的真实目录
-        SRC_MAKEFILE_DIR=$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 3 -name "Makefile" -not -path "*/sdk/*" -exec dirname {} \; | head -n 1)
+        # 1. 寻找源码中的真实 Makefile 所在目录
+        MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE" -maxdepth 3 -name "Makefile" -not -path "*/sdk/*" | head -n 1)
+        SRC_DIR=$(dirname "$MAKEFILE_PATH")
         
-        if [ -z "$SRC_MAKEFILE_DIR" ]; then
-          # 如果根目录下就是 Makefile
-          SRC_MAKEFILE_DIR="$GITHUB_WORKSPACE"
+        # 2. 从 Makefile 中提取正确的 OpenWrt Package 包名
+        PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
+        if [ -z "$PKG_NAME" ]; then
+          PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
         fi
         
-        echo "定位到插件源码 Makefile 所在路径: $SRC_MAKEFILE_DIR"
+        echo "解析到真实 OpenWrt 包名为: $PKG_NAME"
+        
+        # 3. 将源码同步到与 PKG_NAME 严格同名的目录下
+        TARGET_DIR="package/$PKG_NAME"
+        mkdir -p "$TARGET_DIR"
+        rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_DIR/" "$TARGET_DIR/"
 
-        # 2. 将源码正确复制到 package/tencentcloud-ddns 目录
-        mkdir -p package/tencentcloud-ddns
-        rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_MAKEFILE_DIR/" package/tencentcloud-ddns/
-
-        echo "=== 检查 package/tencentcloud-ddns 目录结构 ==="
-        ls -la package/tencentcloud-ddns/
-
-        # 3. 更新并安装依赖 feeds
+        # 4. 刷新 feeds 依赖
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
 
-    - name: 编译插件 (.apk)
+        # 5. 生成配置文件并写入该包为编译目标 (m)
+        make defconfig
+        echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
+        make defconfig
+
+        # 保存环境变量传递给下一个 step
+        echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
+
+    - name: 执行插件编译 (.apk)
       run: |
         cd sdk
-        
-        # 1. 从 Makefile 中提取标准的 OpenWrt Package Name (如 luci-app-tencentcloud-ddns)
-        TARGET_PKG=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' package/tencentcloud-ddns/Makefile | head -n 1 | cut -d'/' -f2)
-        
-        if [ -z "$TARGET_PKG" ]; then
-          TARGET_PKG=$(grep -E '^PKG_NAME:=' package/tencentcloud-ddns/Makefile | cut -d'=' -f2 | tr -d ' \r\n')
-        fi
-        
-        if [ -z "$TARGET_PKG" ]; then
-          TARGET_PKG="tencentcloud-ddns"
-        fi
-
-        echo "=== 确定 OpenWrt 编译目标包名: $TARGET_PKG ==="
-
-        # 2. 生成默认配置并激活当前软件包
-        make defconfig
-        echo "CONFIG_PACKAGE_$TARGET_PKG=m" >> .config
-        make defconfig
-
-        # 3. 强制刷索引并编译
-        make package/$TARGET_PKG/compile V=s -j$(nproc)
+        # 编译指定的 Package
+        make package/$PKG_NAME/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk 安装包
       uses: actions/upload-artifact@v4
