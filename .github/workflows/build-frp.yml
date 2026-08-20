@@ -1,4 +1,4 @@
-name: Build OpenWrt FRP Plugin
+name: Build OpenWrt FRP APK Plugins
 
 on:
   workflow_dispatch:
@@ -11,67 +11,116 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Build FRP v0.71.0 IPK Packages
+      - name: Build FRP APK Packages for OpenWrt 25.12.5
         run: |
           FRP_VER="0.71.0"
-          
-          # 创建输出绝对路径，彻底避免 ipkg-build 找不到目录
+          SDK_VER="25.12.5"
+          SDK_URL="https://downloads.openwrt.org/releases/${SDK_VER}/targets/rockchip/armv8/openwrt-sdk-${SDK_VER}-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz"
+
           WORK_DIR=$(pwd)
           OUT_DIR="${WORK_DIR}/output"
           mkdir -p "$OUT_DIR"
 
-          # 1. 下载 OpenWrt 官方 ipkg-build 打包脚本
-          wget -q https://raw.githubusercontent.com/openwrt/openwrt/master/scripts/ipkg-build -O /tmp/ipkg-build
-          chmod +x /tmp/ipkg-build
+          # 1. 下载并解压 OpenWrt 25.12.5 SDK
+          echo "Downloading OpenWrt $SDK_VER SDK..."
+          wget -q "$SDK_URL" -O openwrt-sdk.tar.xz
+          tar -xf openwrt-sdk.tar.xz
+          SDK_DIR=$(find . -maxdepth 1 -type d -name "openwrt-sdk-*" | head -n 1)
+          cd "$SDK_DIR"
 
-          # 2. 下载 FRP 官方最新 aarch64 二进制文件
-          wget -q https://github.com/fatedier/frp/releases/download/v${FRP_VER}/frp_${FRP_VER}_linux_arm64.tar.gz
-          tar -xzf frp_${FRP_VER}_linux_arm64.tar.gz
-
-          # --- 打包 frpc (客户端) ---
-          mkdir -p ipk_frpc/CONTROL ipk_frpc/usr/bin
-          cp frp_${FRP_VER}_linux_arm64/frpc ipk_frpc/usr/bin/
-          chmod +x ipk_frpc/usr/bin/frpc
-
-          cat << EOF > ipk_frpc/CONTROL/control
-          Package: frpc
-          Version: ${FRP_VER}-1
-          Depends: libc
-          Architecture: aarch64_generic
-          Maintainer: OpenWrt
-          Description: A fast reverse proxy client (v0.71.0 official binary for ARM64)
-          EOF
-
-          /tmp/ipkg-build ipk_frpc "$OUT_DIR"
-
-          # --- 打包 frps (服务端) ---
-          mkdir -p ipk_frps/CONTROL ipk_frps/usr/bin
-          cp frp_${FRP_VER}_linux_arm64/frps ipk_frps/usr/bin/
-          chmod +x ipk_frps/usr/bin/frps
-
-          cat << EOF > ipk_frps/CONTROL/control
-          Package: frps
-          Version: ${FRP_VER}-1
-          Depends: libc
-          Architecture: aarch64_generic
-          Maintainer: OpenWrt
-          Description: A fast reverse proxy server (v0.71.0 official binary for ARM64)
-          EOF
-
-          /tmp/ipkg-build ipk_frps "$OUT_DIR"
-
-          # 3. 提取编译 LuCI 网页界面 (luci-app-frpc & 中文语言包)
-          wget -q https://downloads.openwrt.org/releases/23.05.0/targets/rockchip/armv8/openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          tar -xf openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          cd openwrt-sdk-23.05.0-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64
+          # 2. 更新并安装 Feeds 源
           ./scripts/feeds update -a
           ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
-          make defconfig
-          make package/feeds/luci/luci-app-frpc/compile V=s
-          find bin/packages/ -name "luci-app-frpc*.ipk" -o -name "luci-i18n-frpc-zh-cn*.ipk" | xargs -i cp {} "$OUT_DIR"/
 
-      - name: Upload Artifact
+          # 3. 创建二进制 FRP 客户端/服务端自定义软件包定义 (符合 APK 构建标准)
+          
+          # 创建 frpc 软件包定义
+          mkdir -p package/custom/frpc
+          cat << 'EOF' > package/custom/frpc/Makefile
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=frpc
+PKG_VERSION:=0.71.0
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/frpc
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=A fast reverse proxy client (v0.71.0 prebuilt binary)
+  DEPENDS:=+libc
+endef
+
+define Build/Compile
+endef
+
+define Package/frpc/install
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/frpc $(1)/usr/bin/
+endef
+
+$(eval $(call BuildPackage,frpc))
+EOF
+
+          # 创建 frps 软件包定义
+          mkdir -p package/custom/frps
+          cat << 'EOF' > package/custom/frps/Makefile
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=frps
+PKG_VERSION:=0.71.0
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/frps
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=A fast reverse proxy server (v0.71.0 prebuilt binary)
+  DEPENDS:=+libc
+endef
+
+define Build/Compile
+endef
+
+define Package/frps/install
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/frps $(1)/usr/bin/
+endef
+
+$(eval $(call BuildPackage,frps))
+EOF
+
+          # 4. 下载 FRP 官方二进制文件并放置到编译源目录
+          wget -q "https://github.com/fatedier/frp/releases/download/v${FRP_VER}/frp_${FRP_VER}_linux_arm64.tar.gz"
+          tar -xzf "frp_${FRP_VER}_linux_arm64.tar.gz"
+          
+          mkdir -p "package/custom/frpc/src"
+          cp "frp_${FRP_VER}_linux_arm64/frpc" "package/custom/frpc/src/"
+          echo 'all:' > package/custom/frpc/src/Makefile
+          
+          mkdir -p "package/custom/frps/src"
+          cp "frp_${FRP_VER}_linux_arm64/frps" "package/custom/frps/src/"
+          echo 'all:' > package/custom/frps/src/Makefile
+
+          # 5. 配置编译目标，开启 APK 格式打包
+          echo "CONFIG_PACKAGE_frpc=m" >> .config
+          echo "CONFIG_PACKAGE_frps=m" >> .config
+          echo "CONFIG_PACKAGE_luci-app-frpc=m" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-frpc-zh-cn=m" >> .config
+          make defconfig
+
+          # 6. 执行编译
+          make package/custom/frpc/compile V=s
+          make package/custom/frpc/compile V=s
+          make package/feeds/luci/luci-app-frpc/compile V=s
+
+          # 7. 收集生成的 .apk 文件
+          find bin/ -name "*.apk" -exec cp {} "$OUT_DIR"/ \;
+
+      - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-frp-v0.71.0-complete-packages
-          path: output/*.ipk
+          name: openwrt-25.12.5-frp-apk-packages
+          path: output/*.apk
