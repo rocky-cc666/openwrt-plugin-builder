@@ -58,7 +58,7 @@ jobs:
           echo "✅ FRP binaries downloaded successfully"
 
           # ============================================
-          # 2. 打包 frpc.apk (APK 本质上就是 tar 归档)
+          # 2. 打包 frpc.apk
           # ============================================
           echo "📦 Building frpc.apk..."
           mkdir -p pkg_frpc/usr/bin pkg_frpc/etc/frp pkg_frpc/etc/init.d
@@ -67,7 +67,7 @@ jobs:
           chmod 755 pkg_frpc/usr/bin/frpc
 
           # 创建默认 TOML 配置文件
-          cat << 'EOF' > pkg_frpc/etc/frp/frpc.toml
+          cat > pkg_frpc/etc/frp/frpc.toml << 'FRPC_CONFIG'
           serverAddr = "127.0.0.1"
           serverPort = 7000
           auth.token = "your_token_here"
@@ -78,10 +78,10 @@ jobs:
           localIP = "127.0.0.1"
           localPort = 22
           remotePort = 6000
-          EOF
+          FRPC_CONFIG
 
-          # 创建 OpenWrt init 脚本 (使用 procd)
-          cat << 'EOF' > pkg_frpc/etc/init.d/frpc
+          # 创建 OpenWrt init 脚本
+          cat > pkg_frpc/etc/init.d/frpc << 'FRPC_INIT'
           #!/bin/sh /etc/rc.common
           START=90
           STOP=10
@@ -96,12 +96,12 @@ jobs:
             procd_set_param stderr 1
             procd_close_instance
           }
-          EOF
+          FRPC_INIT
           chmod 755 pkg_frpc/etc/init.d/frpc
 
-          # 创建 .PKGINFO (APK 包的元数据文件)
+          # 创建 .PKGINFO
           BIN_SIZE=$(du -sb pkg_frpc/usr/bin/frpc | awk '{print $1}')
-          cat << EOF > pkg_frpc/.PKGINFO
+          cat > pkg_frpc/.PKGINFO << EOF
           pkgname = frpc
           pkgver = ${FRP_VER}-r1
           pkgdesc = A fast reverse proxy client v${FRP_VER} for OpenWrt (R2S/E20C)
@@ -113,7 +113,6 @@ jobs:
           depend = libc
           EOF
 
-          # 打包成 .apk (其实就是 tar.gz)
           cd pkg_frpc
           tar -czf "${OUT_DIR}/frpc_${FRP_VER}-r1_${ARCH}.apk" .PKGINFO etc/ usr/
           cd "${WORK_DIR}"
@@ -129,17 +128,17 @@ jobs:
           chmod 755 pkg_frps/usr/bin/frps
 
           # 创建默认 TOML 配置文件
-          cat << 'EOF' > pkg_frps/etc/frp/frps.toml
+          cat > pkg_frps/etc/frp/frps.toml << 'FRPS_CONFIG'
           bindPort = 7000
           auth.token = "your_token_here"
           webServer.addr = "0.0.0.0"
           webServer.port = 7500
           webServer.user = "admin"
           webServer.password = "admin"
-          EOF
+          FRPS_CONFIG
 
           # 创建 OpenWrt init 脚本
-          cat << 'EOF' > pkg_frps/etc/init.d/frps
+          cat > pkg_frps/etc/init.d/frps << 'FRPS_INIT'
           #!/bin/sh /etc/rc.common
           START=90
           STOP=10
@@ -154,11 +153,11 @@ jobs:
             procd_set_param stderr 1
             procd_close_instance
           }
-          EOF
+          FRPS_INIT
           chmod 755 pkg_frps/etc/init.d/frps
 
           BIN_SIZE=$(du -sb pkg_frps/usr/bin/frps | awk '{print $1}')
-          cat << EOF > pkg_frps/.PKGINFO
+          cat > pkg_frps/.PKGINFO << EOF
           pkgname = frps
           pkgver = ${FRP_VER}-r1
           pkgdesc = A fast reverse proxy server v${FRP_VER} for OpenWrt (R2S/E20C)
@@ -206,11 +205,11 @@ jobs:
             echo "ℹ️  Cloning failed, using minimal LuCI configuration"
           fi
 
-          # 创建最小化的 LuCI 界面（如果上面的复制没有覆盖）
+          # 创建最小化的 LuCI 界面
           if [ ! -f "pkg_luci/usr/lib/lua/luci/controller/frpc.lua" ]; then
             echo "Creating minimal LuCI configuration..."
             mkdir -p pkg_luci/usr/lib/lua/luci/controller
-            cat << 'EOF' > pkg_luci/usr/lib/lua/luci/controller/frpc.lua
+            cat > pkg_luci/usr/lib/lua/luci/controller/frpc.lua << 'LUCI_CONTROLLER'
             module("luci.controller.frpc", package.seeall)
             
             function index()
@@ -221,10 +220,10 @@ jobs:
               page.dependent = true
               page.acl_depends = { "luci-app-frpc" }
             end
-            EOF
+            LUCI_CONTROLLER
             
             mkdir -p pkg_luci/usr/lib/lua/luci/model/cbi
-            cat << 'EOF' > pkg_luci/usr/lib/lua/luci/model/cbi/frpc.lua
+            cat > pkg_luci/usr/lib/lua/luci/model/cbi/frpc.lua << 'LUCI_MODEL'
             local m, s, o
             m = Map("frpc", "FRP Client Configuration")
             
@@ -242,19 +241,19 @@ jobs:
             o.password = true
             
             return m
-            EOF
+            LUCI_MODEL
           fi
 
           # 创建默认 UCI 配置文件
-          cat << 'EOF' > pkg_luci/etc/config/frpc
+          cat > pkg_luci/etc/config/frpc << 'UCI_CONFIG'
           config common 'common'
             option serverAddr '127.0.0.1'
             option serverPort '7000'
             option token ''
-          EOF
+          UCI_CONFIG
 
           # 创建 .PKGINFO
-          cat << EOF > pkg_luci/.PKGINFO
+          cat > pkg_luci/.PKGINFO << EOF
           pkgname = luci-app-frpc
           pkgver = 1.0.0-r1
           pkgdesc = LuCI Support for FRP Client (compatible with OpenWrt 25.12.5)
@@ -266,9 +265,11 @@ jobs:
           EOF
 
           cd pkg_luci
-          # 打包所有文件
-          tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/ www/ 2>/dev/null || \
-          tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/
+          if [ -d "www" ]; then
+            tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/ www/
+          else
+            tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/
+          fi
           cd "${WORK_DIR}"
           echo "✅ luci-app-frpc.apk created"
 
