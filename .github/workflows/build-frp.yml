@@ -21,52 +21,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y wget tar git file
-
-          # 方法1: 从 Alpine Linux 官方包仓库下载 apk-tools
-          echo "Installing apk-tools from Alpine Linux repository..."
-          
-          # 下载 Alpine 的 apk-tools 静态编译版本
-          APK_TOOLS_URL="https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/apk-tools-2.14.4-r0.apk"
-          
-          wget -q --show-progress "${APK_TOOLS_URL}" -O apk-tools.apk
-          
-          if [ -f "apk-tools.apk" ]; then
-            # 解压 APK 包
-            mkdir -p apk-tools-extract
-            cd apk-tools-extract
-            tar -xzf ../apk-tools.apk
-            # 复制二进制文件
-            if [ -f "usr/sbin/apk" ]; then
-              sudo cp usr/sbin/apk /usr/local/bin/
-              sudo chmod 755 /usr/local/bin/apk
-              echo "✅ apk-tools installed successfully from Alpine APK"
-            else
-              echo "⚠️  apk binary not found in extracted files"
-            fi
-            cd ..
-          else
-            echo "⚠️  Failed to download apk-tools from Alpine, trying alternative..."
-            
-            # 方法2: 从 GitHub Releases 下载
-            APK_TOOLS_URL="https://github.com/alpinelinux/apk-tools/releases/download/v2.14.4/apk-tools-2.14.4-x86_64-linux-static.tar.gz"
-            wget -q --show-progress "${APK_TOOLS_URL}" -O apk-tools-static.tar.gz
-            
-            if [ -f "apk-tools-static.tar.gz" ]; then
-              tar -xzf apk-tools-static.tar.gz
-              sudo cp apk-tools-2.14.4/apk /usr/local/bin/
-              sudo chmod 755 /usr/local/bin/apk
-              echo "✅ apk-tools installed successfully from GitHub Releases"
-            else
-              echo "⚠️  Failed to install apk-tools, using tar-based packaging instead"
-            fi
-          fi
-          
-          # 验证安装
-          if command -v apk &> /dev/null; then
-            apk --version || echo "apk-tools installed"
-          else
-            echo "⚠️  apk-tools not available, will use manual packaging"
-          fi
+          echo "✅ Build dependencies installed"
 
       - name: Build FRP & LuCI APK Packages
         run: |
@@ -82,8 +37,10 @@ jobs:
           echo "FRP Version: ${FRP_VER}"
           echo "========================================="
 
+          # ============================================
           # 1. 下载 FRP 官方 ARM64 二进制文件
-          echo "Downloading FRP ${FRP_VER} for ARM64..."
+          # ============================================
+          echo "📥 Downloading FRP ${FRP_VER} for ARM64..."
           wget -q --show-progress "https://github.com/fatedier/frp/releases/download/v${FRP_VER}/frp_${FRP_VER}_linux_${SUFFIX}.tar.gz"
           
           if [ ! -f "frp_${FRP_VER}_linux_${SUFFIX}.tar.gz" ]; then
@@ -100,8 +57,10 @@ jobs:
           fi
           echo "✅ FRP binaries downloaded successfully"
 
-          # === 2. 打包 frpc.apk (使用 tar 直接打包) ===
-          echo "Building frpc.apk..."
+          # ============================================
+          # 2. 打包 frpc.apk (APK 本质上就是 tar 归档)
+          # ============================================
+          echo "📦 Building frpc.apk..."
           mkdir -p pkg_frpc/usr/bin pkg_frpc/etc/frp pkg_frpc/etc/init.d
 
           cp "${FRP_DIR}/frpc" pkg_frpc/usr/bin/
@@ -121,7 +80,7 @@ jobs:
           remotePort = 6000
           EOF
 
-          # 创建 OpenWrt init 脚本
+          # 创建 OpenWrt init 脚本 (使用 procd)
           cat << 'EOF' > pkg_frpc/etc/init.d/frpc
           #!/bin/sh /etc/rc.common
           START=90
@@ -140,7 +99,7 @@ jobs:
           EOF
           chmod 755 pkg_frpc/etc/init.d/frpc
 
-          # 创建 .PKGINFO
+          # 创建 .PKGINFO (APK 包的元数据文件)
           BIN_SIZE=$(du -sb pkg_frpc/usr/bin/frpc | awk '{print $1}')
           cat << EOF > pkg_frpc/.PKGINFO
           pkgname = frpc
@@ -154,13 +113,16 @@ jobs:
           depend = libc
           EOF
 
+          # 打包成 .apk (其实就是 tar.gz)
           cd pkg_frpc
           tar -czf "${OUT_DIR}/frpc_${FRP_VER}-r1_${ARCH}.apk" .PKGINFO etc/ usr/
           cd "${WORK_DIR}"
           echo "✅ frpc.apk created"
 
-          # === 3. 打包 frps.apk ===
-          echo "Building frps.apk..."
+          # ============================================
+          # 3. 打包 frps.apk
+          # ============================================
+          echo "📦 Building frps.apk..."
           mkdir -p pkg_frps/usr/bin pkg_frps/etc/frp pkg_frps/etc/init.d
 
           cp "${FRP_DIR}/frps" pkg_frps/usr/bin/
@@ -213,10 +175,13 @@ jobs:
           cd "${WORK_DIR}"
           echo "✅ frps.apk created"
 
-          # === 4. 构建 LuCI 界面 ===
-          echo "Building LuCI app for FRP client..."
+          # ============================================
+          # 4. 构建 LuCI 界面
+          # ============================================
+          echo "🌐 Building LuCI app for FRP client..."
           
           # 尝试克隆 LuCI FRP 应用
+          echo "Attempting to clone LuCI FRP repository..."
           git clone --depth 1 https://github.com/superzjg/luci-app-frpc_frps.git /tmp/luci-app-repo 2>/dev/null || \
           git clone --depth 1 https://github.com/kuoruan/luci-app-frpc.git /tmp/luci-app-repo 2>/dev/null || \
           echo "⚠️  Using built-in minimal LuCI configuration"
@@ -228,20 +193,23 @@ jobs:
                    pkg_luci/etc/config \
                    pkg_luci/etc/init.d
 
-          # 复制 LuCI 文件（如果存在）
-          if [ -d "/tmp/luci-app-repo" ]; then
-            echo "Copying LuCI files from repository..."
+          # 如果克隆成功，复制 LuCI 文件
+          if [ -d "/tmp/luci-app-repo" ] && [ -d "/tmp/luci-app-repo/.git" ]; then
+            echo "✅ LuCI repository cloned successfully"
             if [ -d "/tmp/luci-app-repo/luasrc" ]; then
               cp -r /tmp/luci-app-repo/luasrc/* pkg_luci/usr/lib/lua/luci/ 2>/dev/null || true
             fi
             if [ -d "/tmp/luci-app-repo/root" ]; then
               cp -r /tmp/luci-app-repo/root/* pkg_luci/ 2>/dev/null || true
             fi
+          else
+            echo "ℹ️  Cloning failed, using minimal LuCI configuration"
           fi
 
           # 创建最小化的 LuCI 界面（如果上面的复制没有覆盖）
           if [ ! -f "pkg_luci/usr/lib/lua/luci/controller/frpc.lua" ]; then
             echo "Creating minimal LuCI configuration..."
+            mkdir -p pkg_luci/usr/lib/lua/luci/controller
             cat << 'EOF' > pkg_luci/usr/lib/lua/luci/controller/frpc.lua
             module("luci.controller.frpc", package.seeall)
             
@@ -255,6 +223,7 @@ jobs:
             end
             EOF
             
+            mkdir -p pkg_luci/usr/lib/lua/luci/model/cbi
             cat << 'EOF' > pkg_luci/usr/lib/lua/luci/model/cbi/frpc.lua
             local m, s, o
             m = Map("frpc", "FRP Client Configuration")
@@ -297,13 +266,17 @@ jobs:
           EOF
 
           cd pkg_luci
-          tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/ www/ 2>/dev/null || tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/
+          # 打包所有文件
+          tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/ www/ 2>/dev/null || \
+          tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/
           cd "${WORK_DIR}"
           echo "✅ luci-app-frpc.apk created"
 
-          # === 5. 验证和总结 ===
+          # ============================================
+          # 5. 验证和总结
+          # ============================================
           echo "========================================="
-          echo "Build Summary:"
+          echo "📊 Build Summary:"
           echo "========================================="
           
           echo ""
@@ -311,7 +284,8 @@ jobs:
           for apk in ${OUT_DIR}/*.apk; do
             if [ -f "$apk" ]; then
               SIZE=$(du -h "$apk" | awk '{print $1}')
-              echo "  ✅ $(basename $apk) ($SIZE)"
+              FILES=$(tar -tzf "$apk" 2>/dev/null | wc -l)
+              echo "  ✅ $(basename $apk) ($SIZE, $FILES files)"
             fi
           done
           echo ""
