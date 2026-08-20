@@ -16,10 +16,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 适用于 NanoPi R2S (Rockchip RK3328)
+          # 适用于 NanoPi R2S (RK3328) 与 E20C 等 Rockchip ARMv8 设备
           - target: rockchip
             subtarget: armv8
-            sdk_url: https://downloads.openwrt.org/releases/25.12.5/targets/rockchip/armv8/openwrt-sdk-25.12.5-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz
+            sdk_url: https://downloads.openwrt.org/releases/23.05.5/targets/rockchip/armv8/openwrt-sdk-23.05.5-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
 
     steps:
     - name: 检出仓库源码
