@@ -61,36 +61,51 @@ jobs:
       run: |
         cd sdk
         
-        # 创建自定义 package 目录
+        # 1. 在当前项目中寻找包含 OpenWrt Makefile 的真实目录
+        SRC_MAKEFILE_DIR=$(find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 3 -name "Makefile" -not -path "*/sdk/*" -exec dirname {} \; | head -n 1)
+        
+        if [ -z "$SRC_MAKEFILE_DIR" ]; then
+          # 如果根目录下就是 Makefile
+          SRC_MAKEFILE_DIR="$GITHUB_WORKSPACE"
+        fi
+        
+        echo "定位到插件源码 Makefile 所在路径: $SRC_MAKEFILE_DIR"
+
+        # 2. 将源码正确复制到 package/tencentcloud-ddns 目录
         mkdir -p package/tencentcloud-ddns
-        
-        # 复制插件源码，排除不必要的目录
-        rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' ../ package/tencentcloud-ddns/
-        
-        # 更新 feeds 依赖
+        rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_MAKEFILE_DIR/" package/tencentcloud-ddns/
+
+        echo "=== 检查 package/tencentcloud-ddns 目录结构 ==="
+        ls -la package/tencentcloud-ddns/
+
+        # 3. 更新并安装依赖 feeds
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
 
-    - name: 动态解析包名并编译 (.apk)
+    - name: 编译插件 (.apk)
       run: |
         cd sdk
         
-        # 自动提取 Makefile 中的真实的 PKG_NAME (如 luci-app-tencentcloud-ddns 或 tencentcloud-ddns)
-        PKG_NAME=$(grep -E '^PKG_NAME:=' package/tencentcloud-ddns/Makefile | cut -d'=' -f2 | tr -d ' \r\n')
-        if [ -z "$PKG_NAME" ]; then
-          PKG_NAME="tencentcloud-ddns"
+        # 1. 从 Makefile 中提取标准的 OpenWrt Package Name (如 luci-app-tencentcloud-ddns)
+        TARGET_PKG=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' package/tencentcloud-ddns/Makefile | head -n 1 | cut -d'/' -f2)
+        
+        if [ -z "$TARGET_PKG" ]; then
+          TARGET_PKG=$(grep -E '^PKG_NAME:=' package/tencentcloud-ddns/Makefile | cut -d'=' -f2 | tr -d ' \r\n')
         fi
-        echo "识别到的插件包名称 PKG_NAME = $PKG_NAME"
+        
+        if [ -z "$TARGET_PKG" ]; then
+          TARGET_PKG="tencentcloud-ddns"
+        fi
 
-        # 重新生成默认配置
+        echo "=== 确定 OpenWrt 编译目标包名: $TARGET_PKG ==="
+
+        # 2. 生成默认配置并激活当前软件包
         make defconfig
-        
-        # 在 .config 中将该包勾选为模块编译 (m)
-        echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
+        echo "CONFIG_PACKAGE_$TARGET_PKG=m" >> .config
         make defconfig
-        
-        # 编译插件 (同时兼容直接文件夹路径和 PKG_NAME)
-        make package/tencentcloud-ddns/compile V=s -j$(nproc) || make package/$PKG_NAME/compile V=s -j$(nproc)
+
+        # 3. 强制刷索引并编译
+        make package/$TARGET_PKG/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk 安装包
       uses: actions/upload-artifact@v4
