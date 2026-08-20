@@ -33,11 +33,17 @@ jobs:
 
     - name: 动态获取并解压 OpenWrt SDK
       run: |
-        # 动态匹配 Snapshot 目录下的 SDK 真实文件名并下载
-        SDK_NAME=$(curl -s ${{ matrix.target_url }} | grep -oE 'openwrt-sdk-[^"]*\.tar\.xz' | head -n 1)
-        echo "最新 SDK 文件名为: $SDK_NAME"
-        wget -q "${{ matrix.target_url }}$SDK_NAME" -O openwrt-sdk.tar.xz
+        # 模拟浏览器 User-Agent 抓取目录页面，精确提取 openwrt-sdk 开头的压缩包文件名
+        SDK_NAME=$(curl -sL -A "Mozilla/5.0" ${{ matrix.target_url }} | grep -oE 'openwrt-sdk-[^"]*\.tar\.(xz|bz2|gz)' | head -n 1)
         
+        if [ -z "$SDK_NAME" ]; then
+          echo "错误：无法在目标页面中获取 SDK 文件名！"
+          exit 1
+        fi
+
+        echo "获取到的 SDK 文件名为: $SDK_NAME"
+        wget -q -U "Mozilla/5.0" "${{ matrix.target_url }}$SDK_NAME" -O openwrt-sdk.tar.xz
+
         mkdir -p sdk
         tar -xJf openwrt-sdk.tar.xz -C sdk --strip-components=1
         rm openwrt-sdk.tar.xz
