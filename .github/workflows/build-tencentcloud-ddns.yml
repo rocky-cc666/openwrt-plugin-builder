@@ -1,133 +1,81 @@
-name: Build tencentcloud-ddns Plugin
+name: Build TencentCloud DDNS APK
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 env:
-  PLUGIN_URL: "https://github.com/Tencent-Cloud-Plugins/tencentcloud-openwrt-plugin-ddns.git"
+  OPENWRT_VERSION: "25.12.5"
+  PACKAGE_NAME: "luci-app-tencentddns"
+  TENCENT_REPO: "https://github.com/Tencent-Cloud-Plugins/tencentcloud-openwrt-plugin-ddns.git"
 
 jobs:
   build:
-    name: Build for rockchip-armv8
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-    - name: 检出仓库源码
-      uses: actions/checkout@v4
 
-    - name: 清理磁盘空间 (防止 No space left on device)
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf /usr/share/swift
-        docker image prune --all --force || true
-        sudo apt-get clean
-        df -h
+      # 1. 安装工具
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            gawk \
+            gettext \
+            git \
+            libncurses-dev \
+            libssl-dev \
+            python3 \
+            rsync \
+            unzip \
+            wget \
+            curl \
+            file \
+            zstd
 
-    - name: 初始化编译环境
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential clang flex bison gawk gettext git \
-          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl zstd \
-          python3-pyelftools python3-pip swig
+      # 2. 下载 OpenWrt 25.12.5 SDK
+      - name: Download OpenWrt SDK
+        run: |
+          ...
 
-    - name: 下载并解压官方 SDK (.apk 格式)
-      run: |
-        BASE_URL="https://downloads.openwrt.org/releases/25.12.5/targets/rockchip/armv8"
-        
-        curl -sL "$BASE_URL/sha256sums" -o sha256sums
-        SDK_FILE=$(grep -oE 'openwrt-sdk-[a-zA-Z0-9_.-]+\.tar\.(xz|zst|gz|bz2)' sha256sums | head -n 1)
-        
-        if [ -z "$SDK_FILE" ]; then
-          echo "::error::未能在 sha256sums 中解析到 SDK！"
-          cat sha256sums
-          exit 1
-        fi
+      # 3. 下载腾讯云官方 DDNS
+      - name: Download TencentCloud DDNS
+        run: |
+          git clone \
+            "$TENCENT_REPO" \
+            tencentddns
 
-        echo "定位到 SDK 文件: $SDK_FILE"
-        curl -fL -A "Mozilla/5.0" "$BASE_URL/$SDK_FILE" -o openwrt-sdk.archive
+      # 4. 自动修改 Makefile
+      - name: Adapt package for OpenWrt 25.12.5
+        run: |
+          ...
 
-        mkdir -p sdk
-        if [[ "$SDK_FILE" == *.tar.zst ]]; then
-          tar --zstd -xf openwrt-sdk.archive -C sdk --strip-components=1
-        elif [[ "$SDK_FILE" == *.tar.xz ]]; then
-          tar -xJf openwrt-sdk.archive -C sdk --strip-components=1
-        else
-          tar -xzf openwrt-sdk.archive -C sdk --strip-components=1
-        fi
+      # 5. 放进 SDK
+      - name: Install package
+        run: |
+          ...
 
-        rm openwrt-sdk.archive sha256sums
+      # 6. 编译 APK
+      - name: Build APK
+        run: |
+          ...
 
-    - name: 克隆腾讯云官方插件源码
-      run: |
-        rm -rf plugin_src
-        git clone --depth 1 "$PLUGIN_URL" plugin_src
+      # 7. 验证 APK
+      - name: Validate APK
+        run: |
+          ...
 
-        MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE/plugin_src" -iname "makefile" -not -path "*/tools/*" | head -n 1)
+      # 8. 上传
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          ...
 
-        if [ -z "$MAKEFILE_PATH" ]; then
-          echo "::error::未能找到有效的 Makefile，请确认仓库路径！"
-          exit 1
-        fi
-
-        SRC_DIR=$(dirname "$MAKEFILE_PATH")
-        echo "定位到源码目录: $SRC_DIR"
-
-        PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
-        if [ -z "$PKG_NAME" ]; then
-          PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
-        fi
-
-        echo "解析到的 OpenWrt 包名为: $PKG_NAME"
-        echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
-
-        TARGET_DIR="$GITHUB_WORKSPACE/sdk/package/$PKG_NAME"
-        mkdir -p "$TARGET_DIR"
-        rsync -av "$SRC_DIR/" "$TARGET_DIR/"
-
-    - name: 安装完整的 po2lmo 主机编译工具
-      run: |
-        # 编译预备完整的 po2lmo 独立可执行程序
-        mkdir -p /tmp/po2lmo_src
-        curl -sSL https://raw.githubusercontent.com/jerrykuku/luci-app-v2ray-server/master/po2lmo/po2lmo.c -o /tmp/po2lmo_src/po2lmo.c || true
-        
-        if [ ! -s /tmp/po2lmo_src/po2lmo.c ]; then
-          # 备用方案：下载无额外头文件依赖的单文件实现
-          curl -sSL https://raw.githubusercontent.com/vernesong/OpenClash/master/luci-app-openclash/tools/po2lmo.c -o /tmp/po2lmo_src/po2lmo.c
-        fi
-
-        gcc -O2 /tmp/po2lmo_src/po2lmo.c -o /tmp/po2lmo_src/po2lmo
-        sudo mv /tmp/po2lmo_src/po2lmo /usr/local/bin/
-        sudo chmod +x /usr/local/bin/po2lmo
-        rm -rf /tmp/po2lmo_src
-
-        echo "检查 po2lmo 可用性："
-        which po2lmo
-
-    - name: 配置 SDK 并执行编译
-      run: |
-        cd "$GITHUB_WORKSPACE/sdk"
-        ./scripts/feeds update -a
-        ./scripts/feeds install -p packages -p luci
-
-        make defconfig
-        echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
-        make defconfig
-
-        make package/$PKG_NAME/compile V=s -j$(nproc)
-
-    - name: 整理并上传 apk/ipk 安装包
-      uses: actions/upload-artifact@v4
-      with:
-        name: tencentcloud-ddns-rockchip-armv8-packages
-        path: |
-          sdk/bin/packages/**/*.apk
-          sdk/bin/packages/**/*.ipk
-          sdk/bin/targets/**/*.apk
-          sdk/bin/targets/**/*.ipk
+      # 9. Release
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          ...
