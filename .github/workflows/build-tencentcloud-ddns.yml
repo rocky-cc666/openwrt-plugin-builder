@@ -64,13 +64,12 @@ jobs:
 
         rm openwrt-sdk.archive sha256sums
 
-    - name: 克隆或定位插件源码并放入 SDK
+    - name: 克隆腾讯云官方插件源码
       run: |
-        # 1. 检出远端仓库
         rm -rf plugin_src
         git clone --depth 1 "$PLUGIN_URL" plugin_src
 
-        # 2. 寻找包的 Makefile 路径
+        # 腾讯云官方项目的结构中，Makefile 位于 tencentcloud_ddns 文件夹内
         MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE/plugin_src" -iname "makefile" -not -path "*/tools/*" | head -n 1)
 
         if [ -z "$MAKEFILE_PATH" ]; then
@@ -81,7 +80,7 @@ jobs:
         SRC_DIR=$(dirname "$MAKEFILE_PATH")
         echo "定位到源码目录: $SRC_DIR"
 
-        # 3. 解析 Package 名称
+        # 解析真正的包名 (luci-app-tencentddns)
         PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
         if [ -z "$PKG_NAME" ]; then
           PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
@@ -90,24 +89,24 @@ jobs:
         echo "解析到的 OpenWrt 包名为: $PKG_NAME"
         echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
 
-        # 4. 同步至 SDK 对应的 package 目录
+        # 同步整个插件目录到 SDK 的 package 目录下
         TARGET_DIR="$GITHUB_WORKSPACE/sdk/package/$PKG_NAME"
         mkdir -p "$TARGET_DIR"
         rsync -av "$SRC_DIR/" "$TARGET_DIR/"
 
-    - name: 手动编译并安装系统的 po2lmo 工具
+    - name: 准备 po2lmo 工具及 feeds 依赖
       run: |
-        # 从 SDK 或独立源码中提取 po2lmo.c 并直接使用 gcc 编译
         cd "$GITHUB_WORKSPACE/sdk"
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
 
+        # 编译编译期依赖的 po2lmo 工具（解决多语言翻译转换）
         PO2LMO_DIR=$(find "$GITHUB_WORKSPACE/sdk/feeds" -type d -name "po2lmo" | head -n 1)
         if [ -n "$PO2LMO_DIR" ] && [ -d "$PO2LMO_DIR/src" ]; then
           gcc -O2 "$PO2LMO_DIR/src/po2lmo.c" "$PO2LMO_DIR/src/template.c" -o po2lmo
           sudo mv po2lmo /usr/local/bin/
         else
-          # 防护方案：如果没搜索到，直接 curl 获取纯粹的 po2lmo 源码并编译
+          # 防护补充机制：如没寻到源码，下载基准 po2lmo.c 现场编译
           mkdir -p /tmp/po2lmo_build && cd /tmp/po2lmo_build
           curl -sSL https://raw.githubusercontent.com/openwrt/luci/openwrt-23.05/modules/luci-base/src/po2lmo.c -o po2lmo.c
           curl -sSL https://raw.githubusercontent.com/openwrt/luci/openwrt-23.05/modules/luci-base/src/template.c -o template.c
@@ -115,8 +114,8 @@ jobs:
           gcc -O2 po2lmo.c template.c -o po2lmo
           sudo mv po2lmo /usr/local/bin/
         fi
-        
-        echo "检查 po2lmo 安装路径及可用性："
+
+        echo "验证 po2lmo 环境："
         which po2lmo
 
     - name: 配置 SDK 并执行编译
@@ -126,6 +125,7 @@ jobs:
         echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
         make defconfig
 
+        # 编译目标包
         make package/$PKG_NAME/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk/ipk 安装包
