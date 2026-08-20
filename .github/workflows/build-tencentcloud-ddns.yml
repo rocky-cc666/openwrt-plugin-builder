@@ -63,11 +63,18 @@ jobs:
 
     - name: 自动对齐包名并配置编译
       run: |
-        # 1. 在仓库中寻找包含 Makefile 的路径
-        MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE" -maxdepth 3 -name "Makefile" -not -path "*/sdk/*" | head -n 1)
-        SRC_DIR=$(dirname "$MAKEFILE_PATH")
+        # 1. 查找包含 Makefile 的位置
+        MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE" -name "Makefile" -not -path "*/sdk/*" | head -n 1)
         
-        # 2. 从 Makefile 解析出 PKG_NAME
+        if [ -z "$MAKEFILE_PATH" ]; then
+          echo "::error::未在仓库中查找到 Makefile 文件！"
+          exit 1
+        fi
+
+        SRC_DIR=$(dirname "$MAKEFILE_PATH")
+        echo "找到 Makefile 路径: $MAKEFILE_PATH"
+
+        # 2. 从 Makefile 中提取正确的 PKG_NAME
         PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
         if [ -z "$PKG_NAME" ]; then
           PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
@@ -75,26 +82,24 @@ jobs:
         if [ -z "$PKG_NAME" ]; then
           PKG_NAME="tencentcloud-ddns"
         fi
-        
+
         echo "解析到真实 OpenWrt 包名为: $PKG_NAME"
         echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
 
-        # 3. 安全同步源码（使用临时隔离目录，防止循环递归）
-        TMP_PKG_DIR="/tmp/clean_plugin_src"
-        rm -rf "$TMP_PKG_DIR"
-        mkdir -p "$TMP_PKG_DIR"
-        
-        # 同步源码，严格剔除 sdk、.git、.github 目录
-        rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_DIR/" "$TMP_PKG_DIR/"
-
-        # 移动到 SDK 的 package 目录
+        # 3. 创建 SDK 对应的包目录并进行纯净复制
         TARGET_DIR="$GITHUB_WORKSPACE/sdk/package/$PKG_NAME"
-        rm -rf "$TARGET_DIR"
         mkdir -p "$TARGET_DIR"
-        cp -r "$TMP_PKG_DIR"/* "$TARGET_DIR/"
-        rm -rf "$TMP_PKG_DIR"
+        
+        rsync -av \
+          --exclude='sdk' \
+          --exclude='.git' \
+          --exclude='.github' \
+          "$SRC_DIR/" "$TARGET_DIR/"
 
-        # 4. 在 SDK 中配置 feeds 与编译选项
+        echo "=== 检查 $TARGET_DIR 内容 ==="
+        ls -la "$TARGET_DIR"
+
+        # 4. 配置 SDK feeds 和编译项
         cd "$GITHUB_WORKSPACE/sdk"
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
