@@ -50,7 +50,7 @@ jobs:
             zlib1g-dev
           echo "✅ 依赖安装完成"
 
-      # ==================== 步骤2: 下载 SDK（修正版） ====================
+      # ==================== 步骤2: 下载 SDK（使用 Python 解析） ====================
       - name: 下载 OpenWrt SDK
         id: download_sdk
         run: |
@@ -59,49 +59,54 @@ jobs:
           
           echo "正在下载 OpenWrt ${VERSION} SDK，架构: ${ARCH}"
           
-          # SDK 基础 URL
           SDK_BASE_URL="https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}"
           echo "SDK 目录: ${SDK_BASE_URL}"
           
-          # 方法1: 使用 curl 获取目录列表，找到 SDK 文件名
-          echo "正在获取 SDK 文件列表..."
+          # 使用 Python 解析 HTML 目录列表，提取 SDK 文件名
+          echo "正在解析 SDK 目录列表..."
+          SDK_FILE=$(python3 << EOF
+          import urllib.request
+          import re
           
-          # 获取目录中的文件列表，过滤出 SDK 文件名
-          SDK_FILE=$(curl -s "${SDK_BASE_URL}/" 2>/dev/null | \
-            grep -o 'openwrt-sdk-[^"]*\.tar\.xz' | \
-            head -1)
+          url = "${SDK_BASE_URL}/"
+          try:
+              response = urllib.request.urlopen(url, timeout=10)
+              html = response.read().decode('utf-8')
+              # 查找 openwrt-sdk 开头的 .tar.xz 文件
+              pattern = r'openwrt-sdk-[^"]+\.tar\.xz'
+              matches = re.findall(pattern, html)
+              if matches:
+                  # 取第一个匹配的文件名
+                  print(matches[0])
+              else:
+                  # 如果没找到，打印空字符串
+                  print("")
+          except Exception as e:
+              print("")
+          EOF
+          )
           
           if [ -n "${SDK_FILE}" ]; then
-            echo "✅ 找到 SDK 文件: ${SDK_FILE}"
+            echo "✅ 通过目录列表找到 SDK: ${SDK_FILE}"
             SDK_URL="${SDK_BASE_URL}/${SDK_FILE}"
           else
-            echo "⚠️ 通过目录列表未找到 SDK，尝试直接构建 URL..."
-            
-            # 方法2: 尝试常见的 GCC 版本组合
-            for GCC_VER in "13.3.0" "13.2.0" "12.3.0"; do
-              TEST_URL="${SDK_BASE_URL}/openwrt-sdk-${VERSION}-$(echo ${ARCH} | tr '/' '-')_gcc-${GCC_VER}_musl.Linux-x86_64.tar.xz"
-              echo "尝试: ${TEST_URL}"
-              if wget -q --spider "${TEST_URL}" 2>/dev/null; then
-                SDK_URL="${TEST_URL}"
-                echo "✅ 找到 SDK: ${SDK_URL}"
-                break
-              fi
-            done
-          fi
-          
-          # 如果仍然没有找到，报错退出
-          if [ -z "${SDK_URL}" ]; then
             echo "============================================"
-            echo "❌ 无法找到 SDK 文件！"
+            echo "❌ 无法解析目录列表！"
             echo "请手动访问以下地址查看可用的 SDK："
             echo "${SDK_BASE_URL}/"
-            echo "然后根据实际文件名，手动修改工作流"
+            echo ""
+            echo "然后复制 SDK 文件名，手动修改下面的下载命令"
             echo "============================================"
+            
+            # 输出目录列表以便调试
+            echo "目录列表内容（前50行）："
+            curl -s "${SDK_BASE_URL}/" | head -50
+            
             exit 1
           fi
           
-          # 下载 SDK
           echo "开始下载 SDK..."
+          echo "下载 URL: ${SDK_URL}"
           wget -q --show-progress "${SDK_URL}" -O sdk.tar.xz
           
           if [ ! -f sdk.tar.xz ] || [ ! -s sdk.tar.xz ]; then
@@ -121,8 +126,6 @@ jobs:
           cd openwrt-sdk
           if [ -f "Makefile" ]; then
             echo "✅ SDK 验证通过"
-            echo "SDK 内容:"
-            ls -la | head -20
           else
             echo "❌ SDK 验证失败，未找到 Makefile"
             echo "当前目录内容:"
@@ -145,7 +148,6 @@ jobs:
           
           cd openwrt-sdk/package
           
-          # 直接从 GitHub 克隆主题源码
           echo "从 GitHub 克隆主题源码..."
           git clone --depth 1 https://github.com/zzsj0928/luci-theme-liquid.git
           
@@ -163,24 +165,15 @@ jobs:
           ARCH="${{ github.event.inputs.target_arch }}"
           PACKAGE="${{ github.event.inputs.package_name }}"
           
-          # 提取架构前缀
           ARCH_PREFIX=$(echo ${ARCH} | cut -d'/' -f1)
           ARCH_SUFFIX=$(echo ${ARCH} | cut -d'/' -f2)
           
-          # 生成最小化配置
           cat > .config << EOF
-          # 目标平台
           CONFIG_TARGET_${ARCH_PREFIX}=y
           CONFIG_TARGET_${ARCH_PREFIX}_${ARCH_SUFFIX}=y
           CONFIG_TARGET_${ARCH_PREFIX}_${ARCH_SUFFIX}_DEVICE_generic=y
-          
-          # 编译我们的主题包
           CONFIG_PACKAGE_${PACKAGE}=y
-          
-          # 使用 APK 包格式（OpenWrt 25.12+）
           CONFIG_USE_APK=y
-          
-          # 加速编译
           CONFIG_ALL_KMODS=n
           CONFIG_ALL_NONSHARED=n
           CONFIG_TARGET_IMAGES_GZIP=n
@@ -214,10 +207,8 @@ jobs:
       - name: 收集编译产物
         id: collect
         run: |
-          # 查找所有 .apk 文件
           find openwrt-sdk -name "*.apk" -type f -exec cp -v {} ./ \; 2>/dev/null || true
           
-          # 如果没找到 .apk，查找 .ipk
           if [ $(find . -maxdepth 1 -name "*.apk" | wc -l) -eq 0 ]; then
             echo "未找到 .apk 文件，尝试查找 .ipk..."
             find openwrt-sdk -name "*.ipk" -type f -exec cp -v {} ./ \; 2>/dev/null || true
@@ -230,8 +221,6 @@ jobs:
           
           if [ ${APK_COUNT} -eq 0 ] && [ ${IPK_COUNT} -eq 0 ]; then
             echo "❌ 未找到编译产物！"
-            echo "查找路径:"
-            find openwrt-sdk -name "*.ipk" -o -name "*.apk" | head -20
             exit 1
           fi
           
