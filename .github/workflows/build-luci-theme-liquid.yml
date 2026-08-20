@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       openwrt_version:
-        description: 'OpenWrt 版本 (如 v25.12.5, v24.10.0)'
+        description: 'OpenWrt 版本 (如 25.12.5, 24.10.0)'
         required: true
-        default: 'v25.12.5'
+        default: '25.12.5'
         type: string
       target_arch:
         description: '目标架构 (如 armsr/armv8, rockchip/armv8)'
@@ -23,7 +23,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # 设置超时时间，避免卡死
     timeout-minutes: 30
 
     steps:
@@ -58,35 +57,52 @@ jobs:
           VERSION="${{ github.event.inputs.openwrt_version }}"
           ARCH="${{ github.event.inputs.target_arch }}"
           
-          # 构建 SDK 下载 URL（官方源）
+          echo "正在下载 OpenWrt ${VERSION} SDK，架构: ${ARCH}"
+          
+          # 构建正确的 SDK URL（去掉版本号前的 v 前缀）
           SDK_URL="https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/openwrt-sdk-${VERSION}-$(echo ${ARCH} | tr '/' '-')_gcc-*.Linux-x86_64.tar.xz"
           
-          echo "正在从官方源下载 SDK..."
-          echo "URL: $SDK_URL"
+          echo "SDK URL: $SDK_URL"
           
-          # 使用 wget 尝试下载（支持通配符）
-          wget -q --show-progress \
-            "https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/sha256sums" \
-            -O sha256sums 2>/dev/null || echo "跳过 sha256sums 下载"
-          
-          # 直接尝试下载 SDK
+          # 直接尝试下载 SDK（使用通配符）
           wget -q --show-progress \
             "https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/openwrt-sdk-${VERSION}-$(echo ${ARCH} | tr '/' '-')_gcc-*.Linux-x86_64.tar.xz" \
-            -O sdk.tar.xz
+            -O sdk.tar.xz || {
+              echo "第一次下载失败，尝试备用 URL..."
+              # 备用方式：如果通配符失败，尝试精确文件名
+              SDK_PRECISE="https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/openwrt-sdk-${VERSION}-$(echo ${ARCH} | tr '/' '-')_gcc-13.3.0_musl.Linux-x86_64.tar.xz"
+              wget -q --show-progress "$SDK_PRECISE" -O sdk.tar.xz
+            }
           
           if [ ! -f sdk.tar.xz ] || [ ! -s sdk.tar.xz ]; then
-            echo "错误：SDK 下载失败，请检查版本和架构是否正确"
-            echo "OpenWrt 25.12.5 下载地址："
-            echo "https://downloads.openwrt.org/releases/25.12.5/targets/${ARCH}/"
+            echo "============================================"
+            echo "❌ SDK 下载失败！"
+            echo "请访问以下地址查看可用的 SDK 版本："
+            echo "https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/"
+            echo "============================================"
             exit 1
           fi
           
-          echo "SDK 下载成功，开始解压..."
+          echo "SDK 下载成功，文件大小: $(du -h sdk.tar.xz | cut -f1)"
+          echo "开始解压 SDK..."
           tar -xf sdk.tar.xz
           mv openwrt-sdk-* openwrt-sdk
           echo "SDK 解压完成"
 
-      # ==================== 步骤3: 更新 feeds ====================
+      # ==================== 步骤3: 验证 SDK ====================
+      - name: 验证 SDK
+        run: |
+          cd openwrt-sdk
+          if [ -f "Makefile" ]; then
+            echo "✅ SDK 验证通过"
+            echo "SDK 内容:"
+            ls -la
+          else
+            echo "❌ SDK 验证失败，未找到 Makefile"
+            exit 1
+          fi
+
+      # ==================== 步骤4: 更新 feeds ====================
       - name: 更新 feeds
         run: |
           cd openwrt-sdk
@@ -94,7 +110,7 @@ jobs:
           ./scripts/feeds install -a
           echo "feeds 更新完成"
 
-      # ==================== 步骤4: 准备主题源码 ====================
+      # ==================== 步骤5: 准备主题源码 ====================
       - name: 准备主题源码
         run: |
           PACKAGE="${{ github.event.inputs.package_name }}"
@@ -109,20 +125,32 @@ jobs:
             git clone --depth 1 https://github.com/zzsj0928/luci-theme-liquid.git
           fi
           echo "主题源码准备完成"
+          
+          # 验证主题源码是否存在
+          if [ -d "openwrt-sdk/package/${PACKAGE}" ]; then
+            echo "✅ 主题源码已就位"
+          else
+            echo "❌ 主题源码未正确放置"
+            exit 1
+          fi
 
-      # ==================== 步骤5: 配置编译 ====================
+      # ==================== 步骤6: 配置编译 ====================
       - name: 配置编译参数
         run: |
           cd openwrt-sdk
           ARCH="${{ github.event.inputs.target_arch }}"
           PACKAGE="${{ github.event.inputs.package_name }}"
           
+          # 提取架构前缀（如 armsr/armv8 -> armsr）
+          ARCH_PREFIX=$(echo ${ARCH} | cut -d'/' -f1)
+          ARCH_FULL=$(echo ${ARCH} | tr '/' '_')
+          
           # 生成最小化配置
           cat > .config << EOF
           # 目标平台
-          CONFIG_TARGET_$(echo ${ARCH} | cut -d'/' -f1)=y
-          CONFIG_TARGET_$(echo ${ARCH} | tr '/' '_')=y
-          CONFIG_TARGET_$(echo ${ARCH} | tr '/' '_')_DEVICE_generic=y
+          CONFIG_TARGET_${ARCH_PREFIX}=y
+          CONFIG_TARGET_${ARCH_FULL}=y
+          CONFIG_TARGET_${ARCH_FULL}_DEVICE_generic=y
           
           # 编译我们的主题包
           CONFIG_PACKAGE_${PACKAGE}=y
@@ -138,11 +166,14 @@ jobs:
           CONFIG_PKG_BUILD_JOBS=4
           EOF
           
+          echo "配置内容:"
+          cat .config
+          
           # 生成最终配置
           make defconfig
           echo "编译配置完成"
 
-      # ==================== 步骤6: 执行编译 ====================
+      # ==================== 步骤7: 执行编译 ====================
       - name: 编译主题包
         run: |
           cd openwrt-sdk
@@ -152,19 +183,24 @@ jobs:
           make package/${PACKAGE}/compile -j$(nproc) V=s
           
           if [ $? -eq 0 ]; then
-            echo "编译成功！"
+            echo "✅ 编译成功！"
           else
-            echo "编译失败，请查看上方日志"
+            echo "❌ 编译失败，请查看上方日志"
             exit 1
           fi
 
-      # ==================== 步骤7: 收集产物 ====================
+      # ==================== 步骤8: 收集产物 ====================
       - name: 收集编译产物
         id: collect
         run: |
-          # 查找所有 .apk 和 .ipk 文件
+          # 查找所有 .apk 文件（优先）
           find openwrt-sdk -name "*.apk" -type f -exec cp -v {} ./ \; 2>/dev/null || true
-          find openwrt-sdk -name "*.ipk" -type f -exec cp -v {} ./ \; 2>/dev/null || true
+          
+          # 如果没找到 .apk，查找 .ipk
+          if [ $(find . -maxdepth 1 -name "*.apk" | wc -l) -eq 0 ]; then
+            echo "未找到 .apk 文件，尝试查找 .ipk..."
+            find openwrt-sdk -name "*.ipk" -type f -exec cp -v {} ./ \; 2>/dev/null || true
+          fi
           
           # 统计文件数量
           APK_COUNT=$(find . -maxdepth 1 -name "*.apk" | wc -l)
@@ -173,15 +209,15 @@ jobs:
           echo "找到 ${APK_COUNT} 个 .apk 文件，${IPK_COUNT} 个 .ipk 文件"
           
           if [ ${APK_COUNT} -eq 0 ] && [ ${IPK_COUNT} -eq 0 ]; then
-            echo "错误：未找到任何编译产物！"
+            echo "❌ 错误：未找到任何编译产物！"
+            echo "请检查编译日志"
             exit 1
           fi
           
-          # 保存产物信息供后续使用
-          echo "apk_count=${APK_COUNT}" >> $GITHUB_OUTPUT
-          echo "ipk_count=${IPK_COUNT}" >> $GITHUB_OUTPUT
+          echo "编译产物列表:"
+          ls -lh *.apk 2>/dev/null || ls -lh *.ipk 2>/dev/null
 
-      # ==================== 步骤8: 上传产物 ====================
+      # ==================== 步骤9: 上传产物 ====================
       - name: 上传 APK 包
         uses: actions/upload-artifact@v4
         with:
@@ -192,11 +228,12 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      # ==================== 步骤9: 显示完成信息 ====================
+      # ==================== 步骤10: 显示完成信息 ====================
       - name: 编译完成
         run: |
           echo "=========================================="
           echo "🎉 编译完成！"
-          echo "📦 产物下载地址在页面下方的 Artifacts 区域"
+          echo "📦 下载地址: Actions 页面下方的 Artifacts 区域"
           echo "=========================================="
-          ls -lh *.apk 2>/dev/null || ls -lh *.ipk 2>/dev/null
+          echo "安装命令："
+          echo "  apk add --allow-untrusted /tmp/你的文件名.apk"
