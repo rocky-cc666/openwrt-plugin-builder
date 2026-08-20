@@ -9,17 +9,8 @@ on:
 
 jobs:
   build:
-    name: Build for ${{ matrix.target }}-${{ matrix.subtarget }}
+    name: Build for rockchip-armv8
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # 适用于 NanoPi R2S (RK3328) 与 E20C 等 Rockchip ARMv8 设备
-          - target: rockchip
-            subtarget: armv8
-            version: "25.12.5"
 
     steps:
     - name: 检出仓库源码
@@ -29,26 +20,41 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential clang flex bison gawk gettext git \
-          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl
+          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl zstd
 
-    - name: 精确下载并解压 OpenWrt 25.12 SDK (.apk 格式)
+    - name: 精确下载并解压官方 SDK (.apk 格式)
       run: |
-        BASE_URL="https://downloads.openwrt.org/releases/${{ matrix.version }}/targets/${{ matrix.target }}/${{ matrix.subtarget }}"
+        BASE_URL="https://downloads.openwrt.org/releases/25.12.5/targets/rockchip/armv8"
         
-        # 实时从官方 sha256sums 提取正确的 SDK 文件名
-        SDK_FILE=$(curl -sL "$BASE_URL/sha256sums" | grep -oE 'openwrt-sdk-[a-zA-Z0-9_.-]+\.tar\.(xz|bz2)' | head -n 1)
+        # 1. 下载官方校验码文件
+        curl -sL "$BASE_URL/sha256sums" -o sha256sums
+        
+        # 2. 全格式正则提取 SDK 文件名 (支持 .tar.xz, .tar.zst, .tar.gz, .tar.bz2)
+        SDK_FILE=$(grep -oE 'openwrt-sdk-[a-zA-Z0-9_.-]+\.tar\.(xz|zst|gz|bz2)' sha256sums | head -n 1)
         
         if [ -z "$SDK_FILE" ]; then
-          echo "错误：无法从官方 sha256sums 中解析到 SDK 文件名！"
+          echo "::error::未能在 sha256sums 中解析到 SDK！以下为该文件内容："
+          cat sha256sums
           exit 1
         fi
 
-        echo "正在下载 SDK: $BASE_URL/$SDK_FILE"
-        curl -fL -A "Mozilla/5.0" "$BASE_URL/$SDK_FILE" -o openwrt-sdk.tar.xz
+        echo "成功定位 SDK 文件: $SDK_FILE"
+        SDK_URL="$BASE_URL/$SDK_FILE"
 
+        # 3. 下载 SDK 压缩包
+        curl -fL -A "Mozilla/5.0" "$SDK_URL" -o openwrt-sdk.archive
+
+        # 4. 根据实际压缩类型自动解压
         mkdir -p sdk
-        tar -xJf openwrt-sdk.tar.xz -C sdk --strip-components=1
-        rm openwrt-sdk.tar.xz
+        if [[ "$SDK_FILE" == *.tar.zst ]]; then
+          tar --zstd -xf openwrt-sdk.archive -C sdk --strip-components=1
+        elif [[ "$SDK_FILE" == *.tar.xz ]]; then
+          tar -xJf openwrt-sdk.archive -C sdk --strip-components=1
+        else
+          tar -xzf openwrt-sdk.archive -C sdk --strip-components=1
+        fi
+
+        rm openwrt-sdk.archive sha256sums
 
     - name: 载入插件源码与依赖
       run: |
@@ -71,6 +77,6 @@ jobs:
     - name: 整理并上传 apk 安装包
       uses: actions/upload-artifact@v4
       with:
-        name: tencentcloud-ddns-${{ matrix.target }}-${{ matrix.subtarget }}-apk
+        name: tencentcloud-ddns-rockchip-armv8-apk
         # 匹配编译出来的 .apk 格式文件
-        path: sdk/bin/packages/${{ matrix.target }}/base/*.apk
+        path: sdk/bin/packages/rockchip/base/*.apk
