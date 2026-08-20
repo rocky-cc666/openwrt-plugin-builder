@@ -30,18 +30,12 @@ jobs:
         sudo apt-get clean
         df -h
 
-    - name: 初始化编译环境并手动安装 po2lmo
+    - name: 初始化编译环境
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential clang flex bison gawk gettext git \
           libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl zstd \
           python3-pyelftools python3-pip swig
-
-        # 编译并安装独立的 po2lmo 工具，避免 SDK 缺失依赖
-        git clone https://github.com/sbwml/po2lmo.git /tmp/po2lmo
-        make -C /tmp/po2lmo
-        sudo install -m 755 /tmp/po2lmo/po2lmo /usr/local/bin/
-        rm -rf /tmp/po2lmo
 
     - name: 下载并解压官方 SDK (.apk 格式)
       run: |
@@ -87,7 +81,7 @@ jobs:
         SRC_DIR=$(dirname "$MAKEFILE_PATH")
         echo "定位到源码目录: $SRC_DIR"
 
-        # 3. 解析 Package 名称 (如 luci-app-tencentddns)
+        # 3. 解析 Package 名称
         PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
         if [ -z "$PKG_NAME" ]; then
           PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
@@ -101,16 +95,30 @@ jobs:
         mkdir -p "$TARGET_DIR"
         rsync -av "$SRC_DIR/" "$TARGET_DIR/"
 
-    - name: 配置 SDK 并执行编译
+    - name: 配置 SDK feeds 并编译安装 po2lmo
       run: |
         cd "$GITHUB_WORKSPACE/sdk"
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
 
+        # 安装并编译 po2lmo 主机工具
+        ./scripts/feeds install po2lmo || true
+        make package/po2lmo/host/compile V=s || true
+
+        # 确保系统 PATH 能直接找到 po2lmo
+        HOST_BIN="$GITHUB_WORKSPACE/sdk/staging_dir/host/bin"
+        if [ -f "$HOST_BIN/po2lmo" ]; then
+          sudo cp "$HOST_BIN/po2lmo" /usr/local/bin/
+        fi
+
         make defconfig
         echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
         make defconfig
 
+    - name: 执行插件编译
+      run: |
+        cd "$GITHUB_WORKSPACE/sdk"
+        export PATH="$GITHUB_WORKSPACE/sdk/staging_dir/host/bin:$PATH"
         make package/$PKG_NAME/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk/ipk 安装包
