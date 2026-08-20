@@ -3,17 +3,6 @@ name: Build Liquid Theme APK for OpenWrt 25.12.5
 
 on:
   workflow_dispatch:
-    inputs:
-      openwrt_version:
-        description: 'OpenWrt 版本'
-        required: true
-        default: '25.12.5'
-        type: string
-      target_arch:
-        description: '目标架构 (armsr/armv8 或 rockchip/armv8)'
-        required: true
-        default: 'armsr/armv8'
-        type: string
 
 jobs:
   build:
@@ -30,64 +19,38 @@ jobs:
             libncurses5-dev libncursesw5-dev libssl-dev \
             python3 python3-pip rsync unzip wget xsltproc zlib1g-dev zstd
 
-      # ==================== 下载 SDK ====================
+      # ==================== 下载 SDK（直接硬编码正确的 URL） ====================
       - name: 下载 OpenWrt SDK
         run: |
-          VERSION="${{ github.event.inputs.openwrt_version }}"
-          ARCH="${{ github.event.inputs.target_arch }}"
-          
-          echo "下载 OpenWrt ${VERSION} SDK，架构: ${ARCH}"
-          
-          # 根据架构选择正确的 SDK 下载链接
-          case "${ARCH}" in
-            "armsr/armv8")
-              SDK_URL="https://downloads.openwrt.org/releases/${VERSION}/targets/armsr/armv8/openwrt-sdk-${VERSION}-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
-              ;;
-            "rockchip/armv8")
-              SDK_URL="https://downloads.openwrt.org/releases/${VERSION}/targets/rockchip/armv8/openwrt-sdk-${VERSION}-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
-              ;;
-            *)
-              echo "❌ 不支持的架构: ${ARCH}"
-              echo "支持的架构: armsr/armv8, rockchip/armv8"
-              exit 1
-              ;;
-          esac
+          # 直接使用正确的 URL（注意是 armsr，不是 armrs）
+          SDK_URL="https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-sdk-25.12.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
           
           echo "SDK 下载地址: ${SDK_URL}"
           
-          # 下载 SDK
           wget -q --show-progress "${SDK_URL}" -O sdk.tar.zst || {
-            echo "⚠️ .tar.zst 下载失败，尝试 .tar.xz 格式..."
-            SDK_URL_XZ="${SDK_URL%.zst}.xz"
-            wget -q --show-progress "${SDK_URL_XZ}" -O sdk.tar.xz
+            echo "⚠️ .tar.zst 下载失败，尝试 .tar.xz..."
+            wget -q --show-progress "https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-sdk-25.12.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz" -O sdk.tar.xz
             if [ -f sdk.tar.xz ] && [ -s sdk.tar.xz ]; then
-              echo "✅ 使用 .tar.xz 格式下载成功"
+              echo "✅ 使用 .tar.xz 下载成功"
               tar -xf sdk.tar.xz
             else
-              echo "============================================"
-              echo "❌ SDK 下载失败！"
-              echo "请手动访问以下地址查看实际文件："
-              echo "https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/"
-              echo "============================================"
+              echo "❌ 下载失败！请手动访问："
+              echo "https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/"
               exit 1
             fi
           }
           
-          # 如果下载的是 .tar.zst，用 zstd 解压
           if [ -f sdk.tar.zst ] && [ -s sdk.tar.zst ]; then
-            echo "✅ .tar.zst 下载成功，正在解压..."
+            echo "✅ 下载成功，解压中..."
             tar --zstd -xf sdk.tar.zst
           fi
           
-          # 重命名解压目录
           mv openwrt-sdk-* openwrt-sdk || mv sdk-* openwrt-sdk || true
           
           if [ -d "openwrt-sdk" ]; then
-            echo "✅ SDK 解压完成"
-            ls -la openwrt-sdk | head -10
+            echo "✅ SDK 就绪"
           else
-            echo "❌ SDK 解压失败"
-            ls -la
+            echo "❌ 解压失败"
             exit 1
           fi
 
@@ -98,8 +61,7 @@ jobs:
           if [ -f "Makefile" ]; then
             echo "✅ SDK 验证通过"
           else
-            echo "❌ SDK 验证失败，未找到 Makefile"
-            ls -la
+            echo "❌ 验证失败"
             exit 1
           fi
 
@@ -109,32 +71,21 @@ jobs:
           cd openwrt-sdk
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          echo "✅ feeds 更新完成"
 
       # ==================== 克隆主题源码 ====================
       - name: 准备主题源码
         run: |
           cd openwrt-sdk/package
           git clone --depth 1 https://github.com/zzsj0928/luci-theme-liquid.git
-          if [ -d "luci-theme-liquid" ]; then
-            echo "✅ 主题源码克隆成功"
-          else
-            echo "❌ 主题源码克隆失败"
-            exit 1
-          fi
 
       # ==================== 配置编译 ====================
       - name: 配置编译参数
         run: |
           cd openwrt-sdk
-          ARCH="${{ github.event.inputs.target_arch }}"
-          ARCH_PREFIX=$(echo ${ARCH} | cut -d'/' -f1)
-          ARCH_SUFFIX=$(echo ${ARCH} | cut -d'/' -f2)
-          
           cat > .config << EOF
-          CONFIG_TARGET_${ARCH_PREFIX}=y
-          CONFIG_TARGET_${ARCH_PREFIX}_${ARCH_SUFFIX}=y
-          CONFIG_TARGET_${ARCH_PREFIX}_${ARCH_SUFFIX}_DEVICE_generic=y
+          CONFIG_TARGET_armsr=y
+          CONFIG_TARGET_armsr_armv8=y
+          CONFIG_TARGET_armsr_armv8_DEVICE_generic=y
           CONFIG_PACKAGE_luci-theme-liquid=y
           CONFIG_USE_APK=y
           CONFIG_ALL_KMODS=n
@@ -142,34 +93,21 @@ jobs:
           CONFIG_TARGET_IMAGES_GZIP=n
           CONFIG_IMAGEOPT=n
           EOF
-          
           make defconfig
-          echo "✅ 编译配置完成"
 
       # ==================== 编译 ====================
       - name: 编译主题包
         run: |
           cd openwrt-sdk
-          echo "开始编译 luci-theme-liquid..."
           make package/luci-theme-liquid/compile -j$(nproc) V=s
-          
-          if [ $? -eq 0 ]; then
-            echo "✅ 编译成功！"
-          else
-            echo "❌ 编译失败"
-            exit 1
-          fi
 
       # ==================== 收集产物 ====================
       - name: 收集编译产物
         run: |
           cd openwrt-sdk
-          echo "查找编译产物..."
-          find . -name "*.apk" -type f 2>/dev/null
           find . -name "*.apk" -type f -exec cp -v {} ../ \; 2>/dev/null || true
           find . -name "*.ipk" -type f -exec cp -v {} ../ \; 2>/dev/null || true
           cd ..
-          echo "产物列表:"
           ls -lh *.apk 2>/dev/null || ls -lh *.ipk 2>/dev/null || echo "未找到产物"
 
       # ==================== 上传产物 ====================
@@ -182,11 +120,3 @@ jobs:
             *.ipk
           retention-days: 30
           if-no-files-found: warn
-
-      # ==================== 完成 ====================
-      - name: 编译完成
-        run: |
-          echo "=========================================="
-          echo "🎉 编译流程完成！"
-          echo "📦 如有产物，请在 Artifacts 区域下载"
-          echo "=========================================="
