@@ -10,7 +10,7 @@ on:
         default: '25.12.5'
         type: string
       target_arch:
-        description: '目标架构 (如 armsr/armv8, rockchip/armv8)'
+        description: '目标架构 (推荐 armsr/armv8，或者 rockchip/armv8)'
         required: true
         default: 'armsr/armv8'
         type: string
@@ -48,7 +48,7 @@ jobs:
             wget \
             xsltproc \
             zlib1g-dev
-          echo "依赖安装完成"
+          echo "✅ 依赖安装完成"
 
       # ==================== 步骤2: 下载 SDK ====================
       - name: 下载 OpenWrt SDK
@@ -59,35 +59,46 @@ jobs:
           
           echo "正在下载 OpenWrt ${VERSION} SDK，架构: ${ARCH}"
           
-          # 构建正确的 SDK URL（去掉版本号前的 v 前缀）
-          SDK_URL="https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/openwrt-sdk-${VERSION}-$(echo ${ARCH} | tr '/' '-')_gcc-*.Linux-x86_64.tar.xz"
+          # 构建 SDK URL
+          SDK_BASE_URL="https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}"
+          echo "SDK 目录: ${SDK_BASE_URL}"
           
-          echo "SDK URL: $SDK_URL"
+          # 先列出目录内容，看看有哪些 SDK 文件
+          echo "正在检查 SDK 目录..."
+          wget -q --spider "${SDK_BASE_URL}/" || {
+            echo "❌ 架构路径不存在！"
+            echo "请访问 https://downloads.openwrt.org/releases/${VERSION}/targets/ 查看支持的架构"
+            echo "R2S/E20C 推荐使用: armsr/armv8 或 rockchip/armv8"
+            exit 1
+          }
           
-          # 直接尝试下载 SDK（使用通配符）
+          # 尝试下载 SDK（使用通配符匹配）
+          echo "开始下载 SDK..."
           wget -q --show-progress \
-            "https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/openwrt-sdk-${VERSION}-$(echo ${ARCH} | tr '/' '-')_gcc-*.Linux-x86_64.tar.xz" \
-            -O sdk.tar.xz || {
-              echo "第一次下载失败，尝试备用 URL..."
-              # 备用方式：如果通配符失败，尝试精确文件名
-              SDK_PRECISE="https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/openwrt-sdk-${VERSION}-$(echo ${ARCH} | tr '/' '-')_gcc-13.3.0_musl.Linux-x86_64.tar.xz"
-              wget -q --show-progress "$SDK_PRECISE" -O sdk.tar.xz
+            "${SDK_BASE_URL}/openwrt-sdk-${VERSION}-$(echo ${ARCH} | tr '/' '-')_gcc-*.Linux-x86_64.tar.xz" \
+            -O sdk.tar.xz 2>&1 || {
+              echo "第一次下载失败，尝试备用方式..."
+              # 尝试使用更通用的匹配
+              wget -q --show-progress \
+                "${SDK_BASE_URL}/openwrt-sdk-${VERSION}-*.Linux-x86_64.tar.xz" \
+                -O sdk.tar.xz
             }
           
           if [ ! -f sdk.tar.xz ] || [ ! -s sdk.tar.xz ]; then
             echo "============================================"
             echo "❌ SDK 下载失败！"
-            echo "请访问以下地址查看可用的 SDK 版本："
-            echo "https://downloads.openwrt.org/releases/${VERSION}/targets/${ARCH}/"
+            echo "请访问以下地址手动查看可用的 SDK："
+            echo "${SDK_BASE_URL}/"
+            echo "然后根据实际文件名，修改工作流中的下载 URL"
             echo "============================================"
             exit 1
           fi
           
-          echo "SDK 下载成功，文件大小: $(du -h sdk.tar.xz | cut -f1)"
+          echo "✅ SDK 下载成功，文件大小: $(du -h sdk.tar.xz | cut -f1)"
           echo "开始解压 SDK..."
           tar -xf sdk.tar.xz
           mv openwrt-sdk-* openwrt-sdk
-          echo "SDK 解压完成"
+          echo "✅ SDK 解压完成"
 
       # ==================== 步骤3: 验证 SDK ====================
       - name: 验证 SDK
@@ -95,8 +106,8 @@ jobs:
           cd openwrt-sdk
           if [ -f "Makefile" ]; then
             echo "✅ SDK 验证通过"
-            echo "SDK 内容:"
-            ls -la
+            echo "SDK 版本信息:"
+            cat include/version.mk | grep "VERSION_NUMBER" || echo "无法读取版本信息"
           else
             echo "❌ SDK 验证失败，未找到 Makefile"
             exit 1
@@ -108,7 +119,7 @@ jobs:
           cd openwrt-sdk
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          echo "feeds 更新完成"
+          echo "✅ feeds 更新完成"
 
       # ==================== 步骤5: 准备主题源码 ====================
       - name: 准备主题源码
@@ -124,7 +135,7 @@ jobs:
             cd openwrt-sdk/package
             git clone --depth 1 https://github.com/zzsj0928/luci-theme-liquid.git
           fi
-          echo "主题源码准备完成"
+          echo "✅ 主题源码准备完成"
           
           # 验证主题源码是否存在
           if [ -d "openwrt-sdk/package/${PACKAGE}" ]; then
@@ -143,14 +154,14 @@ jobs:
           
           # 提取架构前缀（如 armsr/armv8 -> armsr）
           ARCH_PREFIX=$(echo ${ARCH} | cut -d'/' -f1)
-          ARCH_FULL=$(echo ${ARCH} | tr '/' '_')
+          ARCH_SUFFIX=$(echo ${ARCH} | cut -d'/' -f2)
           
           # 生成最小化配置
           cat > .config << EOF
           # 目标平台
           CONFIG_TARGET_${ARCH_PREFIX}=y
-          CONFIG_TARGET_${ARCH_FULL}=y
-          CONFIG_TARGET_${ARCH_FULL}_DEVICE_generic=y
+          CONFIG_TARGET_${ARCH_PREFIX}_${ARCH_SUFFIX}=y
+          CONFIG_TARGET_${ARCH_PREFIX}_${ARCH_SUFFIX}_DEVICE_generic=y
           
           # 编译我们的主题包
           CONFIG_PACKAGE_${PACKAGE}=y
@@ -171,7 +182,7 @@ jobs:
           
           # 生成最终配置
           make defconfig
-          echo "编译配置完成"
+          echo "✅ 编译配置完成"
 
       # ==================== 步骤7: 执行编译 ====================
       - name: 编译主题包
@@ -214,7 +225,7 @@ jobs:
             exit 1
           fi
           
-          echo "编译产物列表:"
+          echo "✅ 编译产物列表:"
           ls -lh *.apk 2>/dev/null || ls -lh *.ipk 2>/dev/null
 
       # ==================== 步骤9: 上传产物 ====================
@@ -235,5 +246,10 @@ jobs:
           echo "🎉 编译完成！"
           echo "📦 下载地址: Actions 页面下方的 Artifacts 区域"
           echo "=========================================="
+          echo ""
           echo "安装命令："
           echo "  apk add --allow-untrusted /tmp/你的文件名.apk"
+          echo ""
+          echo "支持的架构："
+          echo "  - armsr/armv8 (通用 ARMv8)"
+          echo "  - rockchip/armv8 (Rockchip 平台)"
