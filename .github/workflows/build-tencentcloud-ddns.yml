@@ -30,12 +30,18 @@ jobs:
         sudo apt-get clean
         df -h
 
-    - name: 初始化编译环境
+    - name: 初始化编译环境并手动安装 po2lmo
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential clang flex bison gawk gettext git \
           libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl zstd \
           python3-pyelftools python3-pip swig
+
+        # 编译并安装独立的 po2lmo 工具，避免 SDK 缺失依赖
+        git clone https://github.com/sbwml/po2lmo.git /tmp/po2lmo
+        make -C /tmp/po2lmo
+        sudo install -m 755 /tmp/po2lmo/po2lmo /usr/local/bin/
+        rm -rf /tmp/po2lmo
 
     - name: 下载并解压官方 SDK (.apk 格式)
       run: |
@@ -95,7 +101,7 @@ jobs:
         mkdir -p "$TARGET_DIR"
         rsync -av "$SRC_DIR/" "$TARGET_DIR/"
 
-    - name: 配置 SDK 并准备编译工具
+    - name: 配置 SDK 并执行编译
       run: |
         cd "$GITHUB_WORKSPACE/sdk"
         ./scripts/feeds update -a
@@ -105,14 +111,6 @@ jobs:
         echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
         make defconfig
 
-        # 预先编译 po2lmo 依赖工具
-        make package/luci-base/compile V=s || make package/feeds/luci/luci-base/compile V=s || true
-
-    - name: 执行插件编译
-      run: |
-        cd "$GITHUB_WORKSPACE/sdk"
-        # 确保 SDK 的 host 工具目录在环境变量中
-        export PATH="$GITHUB_WORKSPACE/sdk/staging_dir/host/bin:$PATH"
         make package/$PKG_NAME/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk/ipk 安装包
