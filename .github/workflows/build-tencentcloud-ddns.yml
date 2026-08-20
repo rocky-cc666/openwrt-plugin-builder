@@ -307,8 +307,7 @@ jobs:
 
 
       # ============================================================
-      # 10. CRITICAL FIX: Create minimal configuration
-      #     Fixed syntax for .config file
+      # 10. Configure minimal package build
       # ============================================================
 
       - name: Configure minimal package build
@@ -458,7 +457,7 @@ jobs:
 
 
       # ============================================================
-      # 13. Find APK
+      # 13. Find generated APK - FINAL FIX: Use multiple patterns
       # ============================================================
 
       - name: Find generated APK
@@ -467,29 +466,38 @@ jobs:
           set -eux
 
           echo "============================================================"
-          echo "Generated APK files"
+          echo "Searching for generated APK files"
           echo "============================================================"
 
-          find \
-            "$GITHUB_WORKSPACE/sdk/bin" \
-            -type f \
-            -name "*.apk" \
-            -print \
-            | sort
+          SDK_BIN="$GITHUB_WORKSPACE/sdk/bin"
 
-          echo
-          echo "TencentCloud DDNS:"
+          echo "Full directory tree under sdk/bin:"
+          find "$SDK_BIN" -type f -name "*.apk" | sort || echo "No APK files found"
 
-          find \
-            "$GITHUB_WORKSPACE/sdk/bin" \
-            -type f \
-            -name "${PACKAGE_NAME}_*.apk" \
-            -print \
-            | sort
+          echo ""
+          echo "============================================================"
+          echo "Looking specifically for TencentCloud DDNS APK"
+          echo "============================================================"
+
+          # Try multiple patterns
+          echo "Pattern 1: ${PACKAGE_NAME}-*.apk (hyphen)"
+          find "$SDK_BIN" -type f -name "${PACKAGE_NAME}-*.apk" | sort || true
+
+          echo ""
+          echo "Pattern 2: ${PACKAGE_NAME}_*.apk (underscore)"
+          find "$SDK_BIN" -type f -name "${PACKAGE_NAME}_*.apk" | sort || true
+
+          echo ""
+          echo "Pattern 3: *${PACKAGE_NAME}*.apk (wildcard)"
+          find "$SDK_BIN" -type f -name "*${PACKAGE_NAME}*.apk" | sort || true
+
+          echo ""
+          echo "Pattern 4: *tencentddns*.apk"
+          find "$SDK_BIN" -type f -name "*tencentddns*.apk" | sort || true
 
 
       # ============================================================
-      # 14. Collect APK
+      # 14. Collect APK - FINAL FIX: Use comprehensive search
       # ============================================================
 
       - name: Collect APK
@@ -499,41 +507,58 @@ jobs:
 
           mkdir -p "$GITHUB_WORKSPACE/dist"
 
+          SDK_BIN="$GITHUB_WORKSPACE/sdk/bin"
+
+          # Use a comprehensive search pattern
+          # Find ANY APK file that contains the package name
           mapfile -t APK_FILES < <(
-            find \
-              "$GITHUB_WORKSPACE/sdk/bin" \
-              -type f \
-              -name "${PACKAGE_NAME}_*.apk"
+            find "$SDK_BIN" -type f -name "*${PACKAGE_NAME}*.apk" 2>/dev/null || true
           )
 
+          # If none found, try with tencentddns
+          if [ "${#APK_FILES[@]}" -eq 0 ]; then
+            echo "Trying alternative pattern: *tencentddns*.apk"
+            mapfile -t APK_FILES < <(
+              find "$SDK_BIN" -type f -name "*tencentddns*.apk" 2>/dev/null || true
+            )
+          fi
+
+          # If still none, list everything for debugging
           if [ "${#APK_FILES[@]}" -eq 0 ]; then
             echo "ERROR: No TencentCloud DDNS APK generated."
 
-            echo
-            echo "All package files:"
+            echo ""
+            echo "All files in sdk/bin:"
+            find "$SDK_BIN" -type f | sort
 
-            find \
-              "$GITHUB_WORKSPACE/sdk/bin" \
-              -type f \
-              | sort
+            echo ""
+            echo "All APK files:"
+            find "$SDK_BIN" -type f -name "*.apk" | sort || echo "No APK files at all"
 
             exit 1
           fi
 
+          echo "Found ${#APK_FILES[@]} APK file(s):"
+          for apk in "${APK_FILES[@]}"; do
+            echo "  - $apk"
+          done
+
+          # Copy all found files
           for apk in "${APK_FILES[@]}"; do
             cp "$apk" "$GITHUB_WORKSPACE/dist/"
           done
 
-          sha256sum \
-            "$GITHUB_WORKSPACE/dist/"*.apk \
-            > "$GITHUB_WORKSPACE/dist/SHA256SUMS"
+          # Generate SHA256 checksums
+          cd "$GITHUB_WORKSPACE/dist"
+          sha256sum *.apk > SHA256SUMS
 
           echo "============================================================"
-          echo "Final artifact"
+          echo "Final artifact contents"
           echo "============================================================"
 
           ls -lh "$GITHUB_WORKSPACE/dist"
 
+          echo ""
           file "$GITHUB_WORKSPACE/dist/"*.apk
 
 
