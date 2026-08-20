@@ -61,34 +61,41 @@ jobs:
       run: |
         cd sdk
         
-        # 创建插件专属目录
+        # 创建自定义 package 目录
         mkdir -p package/tencentcloud-ddns
         
-        # 使用 rsync 排除 git 与 sdk 目录，将插件源码完整复制过去
+        # 复制插件源码，排除不必要的目录
         rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' ../ package/tencentcloud-ddns/
         
-        echo "=== 检查 package/tencentcloud-ddns 目录内容 ==="
-        ls -la package/tencentcloud-ddns/
-
-        # 更新并安装 feed 依赖
+        # 更新 feeds 依赖
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
 
-    - name: 编译插件 (.apk)
+    - name: 动态解析包名并编译 (.apk)
       run: |
         cd sdk
         
-        # 刷新/生成默认编译配置
+        # 自动提取 Makefile 中的真实的 PKG_NAME (如 luci-app-tencentcloud-ddns 或 tencentcloud-ddns)
+        PKG_NAME=$(grep -E '^PKG_NAME:=' package/tencentcloud-ddns/Makefile | cut -d'=' -f2 | tr -d ' \r\n')
+        if [ -z "$PKG_NAME" ]; then
+          PKG_NAME="tencentcloud-ddns"
+        fi
+        echo "识别到的插件包名称 PKG_NAME = $PKG_NAME"
+
+        # 重新生成默认配置
         make defconfig
         
-        # 优先选择单独编译该插件
-        make package/tencentcloud-ddns/compile V=s -j$(nproc)
+        # 在 .config 中将该包勾选为模块编译 (m)
+        echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
+        make defconfig
+        
+        # 编译插件 (同时兼容直接文件夹路径和 PKG_NAME)
+        make package/tencentcloud-ddns/compile V=s -j$(nproc) || make package/$PKG_NAME/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk 安装包
       uses: actions/upload-artifact@v4
       with:
         name: tencentcloud-ddns-rockchip-armv8-apk
         path: |
-          sdk/bin/packages/rockchip/base/*.apk
-          sdk/bin/targets/rockchip/armv8/packages/*.apk
-          sdk/bin/packages/aarch64_generic/**/*.apk
+          sdk/bin/packages/**/*.apk
+          sdk/bin/targets/**/*.apk
