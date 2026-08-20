@@ -20,7 +20,7 @@ jobs:
 
       - name: 下载 OpenWrt SDK
         run: |
-          # 正确的 URL：armsr（不是 armrs）
+          # 正确路径：armsr/armv8（注意是 armsr，不是 armrs 或 armrsr）
           SDK_URL="https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-sdk-25.12.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
           
           echo "下载: ${SDK_URL}"
@@ -28,17 +28,35 @@ jobs:
           wget -q --show-progress "${SDK_URL}" -O sdk.tar.zst || {
             echo "尝试 .tar.xz..."
             wget -q --show-progress "https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-sdk-25.12.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz" -O sdk.tar.xz
-            [ -f sdk.tar.xz ] && tar -xf sdk.tar.xz || exit 1
+            if [ -f sdk.tar.xz ] && [ -s sdk.tar.xz ]; then
+              echo "✅ .tar.xz 下载成功"
+              tar -xf sdk.tar.xz
+            else
+              echo "❌ 下载失败"
+              echo "请手动访问: https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/"
+              exit 1
+            fi
           }
           
-          [ -f sdk.tar.zst ] && tar --zstd -xf sdk.tar.zst
+          if [ -f sdk.tar.zst ] && [ -s sdk.tar.zst ]; then
+            echo "✅ .tar.zst 下载成功"
+            tar --zstd -xf sdk.tar.zst
+          fi
+          
           mv openwrt-sdk-* openwrt-sdk || true
-          [ -d "openwrt-sdk" ] || exit 1
+          
+          if [ -d "openwrt-sdk" ]; then
+            echo "✅ SDK 准备就绪"
+          else
+            echo "❌ SDK 解压失败"
+            exit 1
+          fi
 
       - name: 验证 SDK
         run: |
           cd openwrt-sdk
           [ -f "Makefile" ] || exit 1
+          echo "✅ SDK 验证通过"
 
       - name: 更新 feeds
         run: |
@@ -78,7 +96,9 @@ jobs:
           find . -name "*.apk" -type f -exec cp -v {} ../ \; 2>/dev/null || true
           find . -name "*.ipk" -type f -exec cp -v {} ../ \; 2>/dev/null || true
           cd ..
-          ls -lh *.apk 2>/dev/null || ls -lh *.ipk 2>/dev/null
+          echo "=========================================="
+          ls -lh *.apk 2>/dev/null || ls -lh *.ipk 2>/dev/null || echo "未找到产物"
+          echo "=========================================="
 
       - name: 上传 APK 包
         uses: actions/upload-artifact@v4
