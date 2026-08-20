@@ -95,30 +95,37 @@ jobs:
         mkdir -p "$TARGET_DIR"
         rsync -av "$SRC_DIR/" "$TARGET_DIR/"
 
-    - name: 配置 SDK feeds 并编译安装 po2lmo
+    - name: 手动编译并安装系统的 po2lmo 工具
       run: |
+        # 从 SDK 或独立源码中提取 po2lmo.c 并直接使用 gcc 编译
         cd "$GITHUB_WORKSPACE/sdk"
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
 
-        # 安装并编译 po2lmo 主机工具
-        ./scripts/feeds install po2lmo || true
-        make package/po2lmo/host/compile V=s || true
-
-        # 确保系统 PATH 能直接找到 po2lmo
-        HOST_BIN="$GITHUB_WORKSPACE/sdk/staging_dir/host/bin"
-        if [ -f "$HOST_BIN/po2lmo" ]; then
-          sudo cp "$HOST_BIN/po2lmo" /usr/local/bin/
+        PO2LMO_DIR=$(find "$GITHUB_WORKSPACE/sdk/feeds" -type d -name "po2lmo" | head -n 1)
+        if [ -n "$PO2LMO_DIR" ] && [ -d "$PO2LMO_DIR/src" ]; then
+          gcc -O2 "$PO2LMO_DIR/src/po2lmo.c" "$PO2LMO_DIR/src/template.c" -o po2lmo
+          sudo mv po2lmo /usr/local/bin/
+        else
+          # 防护方案：如果没搜索到，直接 curl 获取纯粹的 po2lmo 源码并编译
+          mkdir -p /tmp/po2lmo_build && cd /tmp/po2lmo_build
+          curl -sSL https://raw.githubusercontent.com/openwrt/luci/openwrt-23.05/modules/luci-base/src/po2lmo.c -o po2lmo.c
+          curl -sSL https://raw.githubusercontent.com/openwrt/luci/openwrt-23.05/modules/luci-base/src/template.c -o template.c
+          curl -sSL https://raw.githubusercontent.com/openwrt/luci/openwrt-23.05/modules/luci-base/src/template.h -o template.h
+          gcc -O2 po2lmo.c template.c -o po2lmo
+          sudo mv po2lmo /usr/local/bin/
         fi
+        
+        echo "检查 po2lmo 安装路径及可用性："
+        which po2lmo
 
+    - name: 配置 SDK 并执行编译
+      run: |
+        cd "$GITHUB_WORKSPACE/sdk"
         make defconfig
         echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
         make defconfig
 
-    - name: 执行插件编译
-      run: |
-        cd "$GITHUB_WORKSPACE/sdk"
-        export PATH="$GITHUB_WORKSPACE/sdk/staging_dir/host/bin:$PATH"
         make package/$PKG_NAME/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk/ipk 安装包
