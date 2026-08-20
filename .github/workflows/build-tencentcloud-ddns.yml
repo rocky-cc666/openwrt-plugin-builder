@@ -8,7 +8,6 @@ on:
   workflow_dispatch:
 
 env:
-  # 腾讯云官方 OpenWrt DDNS 插件仓库地址
   PLUGIN_URL: "https://github.com/Tencent-Cloud-Plugins/tencentcloud-openwrt-plugin-ddns.git"
 
 jobs:
@@ -65,42 +64,36 @@ jobs:
 
         rm openwrt-sdk.archive sha256sums
 
-    - name: 克隆或定位插件源码
+    - name: 克隆或定位插件源码并放入 SDK
       run: |
-        # 1. 优先检查当前 WorkSpace 本身是否已包含 Makefile
-        MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE" -iname "makefile" -not -path "*/sdk/*" | head -n 1)
+        # 1. 检出远端仓库
+        rm -rf plugin_src
+        git clone --depth 1 "$PLUGIN_URL" plugin_src
+
+        # 2. 寻找包的 Makefile 路径
+        MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE/plugin_src" -iname "makefile" -not -path "*/tools/*" | head -n 1)
 
         if [ -z "$MAKEFILE_PATH" ]; then
-          echo "本地未找到 Makefile，准备从远端克隆插件源码: $PLUGIN_URL"
-          rm -rf plugin_src
-          git clone --depth 1 "$PLUGIN_URL" plugin_src
-          MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE/plugin_src" -iname "makefile" | head -n 1)
-        fi
-
-        if [ -z "$MAKEFILE_PATH" ]; then
-          echo "::error::未能找到有效的 Makefile，请确认仓库路径或 URL 是否正确！"
+          echo "::error::未能找到有效的 Makefile，请确认仓库路径！"
           exit 1
         fi
 
         SRC_DIR=$(dirname "$MAKEFILE_PATH")
-        echo "定位到源码 Makefile 路径: $MAKEFILE_PATH"
+        echo "定位到源码目录: $SRC_DIR"
 
-        # 2. 解析 PKG_NAME
+        # 3. 解析 Package 名称 (如 luci-app-tencentddns)
         PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
         if [ -z "$PKG_NAME" ]; then
           PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
-        fi
-        if [ -z "$PKG_NAME" ]; then
-          PKG_NAME="tencentcloud-ddns"
         fi
 
         echo "解析到的 OpenWrt 包名为: $PKG_NAME"
         echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
 
-        # 3. 复制插件源码至 SDK 的 package 目录下
+        # 4. 同步至 SDK 对应的 package 目录
         TARGET_DIR="$GITHUB_WORKSPACE/sdk/package/$PKG_NAME"
         mkdir -p "$TARGET_DIR"
-        rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_DIR/" "$TARGET_DIR/"
+        rsync -av "$SRC_DIR/" "$TARGET_DIR/"
 
     - name: 配置 SDK 并执行编译
       run: |
@@ -114,10 +107,12 @@ jobs:
 
         make package/$PKG_NAME/compile V=s -j$(nproc)
 
-    - name: 整理并上传 apk 安装包
+    - name: 整理并上传 apk/ipk 安装包
       uses: actions/upload-artifact@v4
       with:
-        name: tencentcloud-ddns-rockchip-armv8-apk
+        name: tencentcloud-ddns-rockchip-armv8-packages
         path: |
           sdk/bin/packages/**/*.apk
+          sdk/bin/packages/**/*.ipk
           sdk/bin/targets/**/*.apk
+          sdk/bin/targets/**/*.ipk
