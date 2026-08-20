@@ -20,7 +20,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential clang flex bison gawk gettext git \
-          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl zstd
+          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl zstd \
+          python3-pyelftools python3-pip swig
 
     - name: 精确下载并解压官方 SDK (.apk 格式)
       run: |
@@ -33,7 +34,7 @@ jobs:
         SDK_FILE=$(grep -oE 'openwrt-sdk-[a-zA-Z0-9_.-]+\.tar\.(xz|zst|gz|bz2)' sha256sums | head -n 1)
         
         if [ -z "$SDK_FILE" ]; then
-          echo "::error::未能在 sha256sums 中解析到 SDK！以下为该文件内容："
+          echo "::error::未能在 sha256sums 中解析到 SDK！"
           cat sha256sums
           exit 1
         fi
@@ -51,7 +52,7 @@ jobs:
         elif [[ "$SDK_FILE" == *.tar.xz ]]; then
           tar -xJf openwrt-sdk.archive -C sdk --strip-components=1
         else
-          tar -xzf openwrt-sdk.archive -C sdk --strip-components=1
+          tar -xzf openwrt-archive -C sdk --strip-components=1
         fi
 
         rm openwrt-sdk.archive sha256sums
@@ -63,15 +64,19 @@ jobs:
         mkdir -p package/tencentcloud-ddns
         cp -r ../* package/tencentcloud-ddns/ 2>/dev/null || true
         
-        # 更新并安装 feeds
+        # 更新 feeds
         ./scripts/feeds update -a
-        ./scripts/feeds install -a
+        
+        # 只安装当前插件和基础需要的 feed，避免引入 uboot/perl 等非必要重编译项
+        ./scripts/feeds install -p packages -p luci
 
     - name: 编译插件 (.apk)
       run: |
         cd sdk
+        # 生成默认编译配置
         make defconfig
-        # 编译生成 apk 格式的安装包
+        
+        # 单独编译 tencentcloud-ddns 插件
         make package/tencentcloud-ddns/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk 安装包
@@ -79,4 +84,6 @@ jobs:
       with:
         name: tencentcloud-ddns-rockchip-armv8-apk
         # 匹配编译出来的 .apk 格式文件
-        path: sdk/bin/packages/rockchip/base/*.apk
+        path: |
+          sdk/bin/packages/rockchip/base/*.apk
+          sdk/bin/targets/rockchip/armv8/packages/*.apk
