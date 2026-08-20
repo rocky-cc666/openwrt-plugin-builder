@@ -308,7 +308,7 @@ jobs:
 
       # ============================================================
       # 10. CRITICAL FIX: Create minimal configuration
-      #     Use .config override to prevent any kernel modules
+      #     Fixed syntax for .config file
       # ============================================================
 
       - name: Configure minimal package build
@@ -320,18 +320,13 @@ jobs:
           # Start from a clean minimal configuration.
           rm -f .config
 
+          # Create a proper .config file with correct syntax
           cat > .config <<'EOF'
-          # CONFIG_ALL is not set
-          # CONFIG_ALL_KMODS is not set
-          # CONFIG_ALL_NONSHARED is not set
+          CONFIG_ALL=n
+          CONFIG_ALL_KMODS=n
+          CONFIG_ALL_NONSHARED=n
           CONFIG_AUTOREMOVE=n
           CONFIG_DEVEL=y
-
-          # Force disable ALL kernel modules using negative config
-          # This prevents defconfig from selecting them
-          CONFIG_PACKAGE_kmod-* is not set
-
-          # Build only our target package
           CONFIG_PACKAGE_luci-app-tencentddns=m
           EOF
 
@@ -340,34 +335,39 @@ jobs:
           echo "============================================================"
           cat .config
 
-          # First pass: defconfig will resolve dependencies
+          # Run defconfig to resolve platform defaults
           make defconfig
 
           echo "============================================================"
-          echo "After first defconfig"
+          echo "After defconfig - checking for kernel modules"
           echo "============================================================"
 
-          # Immediately strip out ALL kernel modules
-          # Use sed to remove any line starting with CONFIG_PACKAGE_kmod-
+          # Count and show kernel modules before cleanup
+          KMOD_BEFORE=$(grep -c '^CONFIG_PACKAGE_kmod-' .config || true)
+          echo "Kernel modules before cleanup: $KMOD_BEFORE"
+
+          if [ "$KMOD_BEFORE" -gt 0 ]; then
+            echo "Kernel modules found, removing them..."
+            grep '^CONFIG_PACKAGE_kmod-' .config || true
+          fi
+
+          # Remove ALL kernel module entries
           sed -i '/^CONFIG_PACKAGE_kmod-/d' .config
 
-          # Also ensure ALL_KMODS stays disabled
-          sed -i 's/^CONFIG_ALL_KMODS=.*/# CONFIG_ALL_KMODS is not set/' .config
-
-          # Second pass: defconfig will try to restore dependencies
-          # But we've removed the kmods, so it should respect our setting
-          make defconfig
-
-          echo "============================================================"
-          echo "After second defconfig with kmods stripped"
-          echo "============================================================"
-
-          # One more cleanup pass
-          sed -i '/^CONFIG_PACKAGE_kmod-/d' .config
-
-          # Now manually add our target package if it was removed
+          # Also ensure our target package is still set correctly
           if ! grep -q '^CONFIG_PACKAGE_luci-app-tencentddns=' .config; then
-            echo "Re-adding target package to config..."
+            echo "Re-adding target package..."
+            echo "CONFIG_PACKAGE_luci-app-tencentddns=m" >> .config
+          fi
+
+          # Run defconfig again to resolve any broken dependencies
+          make defconfig
+
+          # Final cleanup - remove any kmods that got re-added
+          sed -i '/^CONFIG_PACKAGE_kmod-/d' .config
+
+          # Ensure target package is still there
+          if ! grep -q '^CONFIG_PACKAGE_luci-app-tencentddns=' .config; then
             echo "CONFIG_PACKAGE_luci-app-tencentddns=m" >> .config
           fi
 
@@ -382,14 +382,12 @@ jobs:
           grep '^CONFIG_PACKAGE_luci-app-tencentddns' .config || echo "NOT FOUND!"
 
           echo ""
-          echo "All configured packages (first 20):"
-          grep '^CONFIG_PACKAGE_' .config | head -20 || true
+          echo "Configuration check:"
+          grep -E '^CONFIG_(ALL|ALL_KMODS|ALL_NONSHARED|AUTOREMOVE|PACKAGE_luci-app-tencentddns)' .config || true
 
 
       # ============================================================
-      # 11. FIXED: More lenient verification
-      #     Allow some required kmods but ensure they don't trigger
-      #     unnecessary builds
+      # 11. Verify minimal package configuration
       # ============================================================
 
       - name: Verify minimal package configuration
@@ -399,40 +397,29 @@ jobs:
           set -eux
 
           echo "============================================================"
-          echo "Checking for unwanted kernel modules"
+          echo "Verifying minimal package configuration"
           echo "============================================================"
-
-          # List all kernel modules that are selected
-          KMODS=$(grep '^CONFIG_PACKAGE_kmod-' .config | grep -v '=n' || true)
-
-          if [ -n "$KMODS" ]; then
-            echo "WARNING: Found kernel modules in config:"
-            echo "$KMODS"
-
-            # Check if these are required platform modules
-            # For armsr/armv8, some kmods are essential for the target
-            # We'll allow them but check they're not massive dependencies
-
-            # Count how many kmods are set to 'y' or 'm'
-            KMOD_COUNT=$(echo "$KMODS" | wc -l)
-
-            if [ "$KMOD_COUNT" -gt 10 ]; then
-              echo "ERROR: Too many kernel modules ($KMOD_COUNT) - likely due to dependency chain"
-              echo "$KMODS"
-              exit 1
-            else
-              echo "✓ $KMOD_COUNT kernel module(s) present (likely platform-required)"
-            fi
-          else
-            echo "✓ No kernel modules found - perfect!"
-          fi
 
           # Check ALL_KMODS is not set
           if grep -q '^CONFIG_ALL_KMODS=y' .config; then
             echo "ERROR: CONFIG_ALL_KMODS is set to y"
             exit 1
+          fi
+
+          # Check ALL_NONSHARED is not set
+          if grep -q '^CONFIG_ALL_NONSHARED=y' .config; then
+            echo "ERROR: CONFIG_ALL_NONSHARED is set to y"
+            exit 1
+          fi
+
+          # Check for any kernel modules - if any exist, it's a problem
+          KMOD_COUNT=$(grep -c '^CONFIG_PACKAGE_kmod-' .config || true)
+          if [ "$KMOD_COUNT" -gt 0 ]; then
+            echo "ERROR: $KMOD_COUNT kernel module(s) are still selected:"
+            grep '^CONFIG_PACKAGE_kmod-' .config
+            exit 1
           else
-            echo "✓ CONFIG_ALL_KMODS is disabled"
+            echo "✓ No kernel modules selected"
           fi
 
           # Verify our target package is configured
@@ -445,7 +432,7 @@ jobs:
           fi
 
           echo "============================================================"
-          echo "✅ Verification passed with minimal configuration"
+          echo "✅ Verification passed successfully"
           echo "============================================================"
 
 
@@ -463,12 +450,9 @@ jobs:
           echo "Building ${PACKAGE_NAME}"
           echo "============================================================"
 
-          # First, do a clean build
-          make package/${PACKAGE_DIR}/clean
-
-          # Then compile
+          # Clean and compile
           make \
-            package/${PACKAGE_DIR}/compile \
+            package/${PACKAGE_DIR}/{clean,compile} \
             V=s \
             -j"$(nproc)"
 
