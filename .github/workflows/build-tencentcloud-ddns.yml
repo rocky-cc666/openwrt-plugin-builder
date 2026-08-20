@@ -1,589 +1,143 @@
-name: Build TencentCloud DDNS APK
+# .github/workflows/build-liquid-theme.yml
+name: Build Liquid Theme for OpenWrt 25.12.5 (ARMv8)
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: write
+    # 手动触发，你可以调整参数再编译
+  # 如果你想每次推送代码都自动编译，可以取消下面注释
+  # push:
+  #   branches: [ "main", "master" ]
 
 env:
-  OPENWRT_VERSION: "25.12.5"
-  SDK_TARGET: "armsr"
-  SDK_SUBTARGET: "armv8"
-
-  TENCENT_REPO: "https://github.com/Tencent-Cloud-Plugins/tencentcloud-openwrt-plugin-ddns.git"
-  TENCENT_REF: "master"
-
-  PACKAGE_NAME: "luci-app-tencentddns"
-  PACKAGE_DIR: "luci-app-tencentddns"
+  # 主题名称
+  PACKAGE_NAME: luci-theme-liquid
+  # 目标架构：R2S/E20C 都是 ARMv8
+  TARGET_ARCH: armsr/armv8
+  # OpenWrt 版本：25.12.5
+  OPENWRT_VERSION: v25.12.5
+  # 使用 APK 包格式
+  USE_APK: "y"
 
 jobs:
   build:
-    name: OpenWrt 25.12.5 - TencentCloud DDNS
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
-
-      # ============================================================
-      # 1. Checkout
-      # ============================================================
-
-      - name: Checkout builder repository
+      # 1. 检查代码仓库
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
 
-
-      # ============================================================
-      # 2. Host dependencies
-      # ============================================================
-
-      - name: Install build dependencies
-        shell: bash
+      # 2. 设置编译环境
+      - name: Setup build environment
         run: |
-          set -eux
-
           sudo apt-get update
-
           sudo apt-get install -y \
-            bc \
             build-essential \
-            clang \
-            flex \
-            bison \
+            ccache \
+            ecj \
+            fastjar \
+            file \
             g++ \
             gawk \
             gettext \
             git \
-            libncurses-dev \
+            java-propose-classpath \
+            libelf-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
             libssl-dev \
             python3 \
-            python3-dev \
-            python3-setuptools \
+            python3-distutils \
+            python3-pip \
+            python3-venv \
             rsync \
             swig \
+            time \
             unzip \
             wget \
-            file \
-            curl \
-            zstd \
-            xz-utils \
-            ca-certificates
+            xsltproc \
+            zlib1g-dev
 
-
-      # ============================================================
-      # 3. Download OpenWrt SDK
-      # ============================================================
-
-      - name: Download OpenWrt 25.12.5 SDK
-        shell: bash
+      # 3. 下载 OpenWrt 25.12.5 官方 SDK
+      - name: Download OpenWrt SDK
         run: |
-          set -eux
+          # 构建下载 URL
+          SDK_URL="https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-sdk-25.12.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz"
+          echo "Downloading SDK from: $SDK_URL"
+          wget -q "$SDK_URL" -O sdk.tar.xz
+          tar -xf sdk.tar.xz
+          mv openwrt-sdk-* openwrt-sdk
+          echo "SDK downloaded and extracted"
 
-          SDK_DIR="$GITHUB_WORKSPACE/sdk"
-
-          mkdir -p "$SDK_DIR"
-
-          SDK_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/${SDK_TARGET}/${SDK_SUBTARGET}/openwrt-sdk-${OPENWRT_VERSION}-${SDK_TARGET}-${SDK_SUBTARGET}_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
-
-          echo "============================================================"
-          echo "OpenWrt SDK"
-          echo "============================================================"
-          echo "$SDK_URL"
-
-          curl -fL \
-            "$SDK_URL" \
-            -o "$GITHUB_WORKSPACE/openwrt-sdk.tar.zst"
-
-          tar \
-            --use-compress-program=unzstd \
-            -xf "$GITHUB_WORKSPACE/openwrt-sdk.tar.zst" \
-            --strip-components=1 \
-            -C "$SDK_DIR"
-
-          rm -f "$GITHUB_WORKSPACE/openwrt-sdk.tar.zst"
-
-          test -x "$SDK_DIR/scripts/feeds"
-
-          echo "SDK ready."
-
-
-      # ============================================================
-      # 4. Update ONLY the LuCI feed
-      # ============================================================
-
-      - name: Update LuCI feed
-        working-directory: sdk
-        shell: bash
+      # 4. 准备 feeds（软件源）
+      - name: Update feeds
         run: |
-          set -eux
+          cd openwrt-sdk
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          echo "Feeds updated"
 
-          ./scripts/feeds update luci
-
-          # Only install LuCI itself.
-          ./scripts/feeds install luci-base luci
-
-
-      # ============================================================
-      # 5. Download TencentCloud source
-      # ============================================================
-
-      - name: Clone TencentCloud DDNS source
-        shell: bash
+      # 5. 将主题源码放入编译目录
+      - name: Copy theme source to package directory
         run: |
-          set -eux
-
-          rm -rf "$GITHUB_WORKSPACE/tencentcloud-source"
-
-          git clone \
-            --depth 1 \
-            --branch "$TENCENT_REF" \
-            "$TENCENT_REPO" \
-            "$GITHUB_WORKSPACE/tencentcloud-source"
-
-          echo "TencentCloud source revision:"
-          git -C "$GITHUB_WORKSPACE/tencentcloud-source" rev-parse HEAD
-
-
-      # ============================================================
-      # 6. Locate TencentCloud package
-      # ============================================================
-
-      - name: Locate TencentCloud package
-        shell: bash
-        run: |
-          set -eux
-
-          SOURCE_DIR="$GITHUB_WORKSPACE/tencentcloud-source/tencentcloud_ddns"
-
-          if [ ! -d "$SOURCE_DIR" ]; then
-            echo "ERROR: TencentCloud package directory not found:"
-            echo "$SOURCE_DIR"
-
-            find \
-              "$GITHUB_WORKSPACE/tencentcloud-source" \
-              -maxdepth 5 \
-              -type f \
-              -name Makefile \
-              -print
-
-            exit 1
-          fi
-
-          echo "SOURCE_DIR=$SOURCE_DIR" >> "$GITHUB_ENV"
-
-          echo "TencentCloud package:"
-          echo "$SOURCE_DIR"
-
-
-      # ============================================================
-      # 7. Copy package into SDK
-      # ============================================================
-
-      - name: Install TencentCloud package into SDK
-        shell: bash
-        run: |
-          set -eux
-
-          TARGET_DIR="$GITHUB_WORKSPACE/sdk/package/${PACKAGE_DIR}"
-
-          rm -rf "$TARGET_DIR"
-
-          mkdir -p "$TARGET_DIR"
-
-          cp -a \
-            "$SOURCE_DIR/." \
-            "$TARGET_DIR/"
-
-          echo "TARGET_DIR=$TARGET_DIR" >> "$GITHUB_ENV"
-
-          echo "Package tree:"
-          find "$TARGET_DIR" -type f | sort
-
-
-      # ============================================================
-      # 8. Build po2lmo
-      # ============================================================
-
-      - name: Build TencentCloud po2lmo
-        shell: bash
-        run: |
-          set -eux
-
-          PO2LMO_DIR="$TARGET_DIR/tools/po2lmo"
-
-          if [ ! -d "$PO2LMO_DIR" ]; then
-            echo "ERROR: po2lmo source directory not found."
-            exit 1
-          fi
-
-          cd "$PO2LMO_DIR"
-
-          make
-
-          test -x src/po2lmo
-
-          sudo install \
-            -m 0755 \
-            src/po2lmo \
-            /usr/local/bin/po2lmo
-
-          command -v po2lmo
-
-          po2lmo --help || true
-
-
-      # ============================================================
-      # 9. Patch package Makefile
-      # ============================================================
-
-      - name: Patch package for OpenWrt 25.12
-        shell: bash
-        run: |
-          set -eux
-
-          MAKEFILE="$TARGET_DIR/Makefile"
-
-          test -f "$MAKEFILE"
-
-          python3 - "$MAKEFILE" <<'PY'
-          import pathlib
-          import re
-          import sys
-
-          path = pathlib.Path(sys.argv[1])
-
-          text = path.read_text()
-
-          # --------------------------------------------------------
-          # Package version
-          # --------------------------------------------------------
-
-          text = re.sub(
-              r'^PKG_RELEASE:=.*$',
-              'PKG_RELEASE:=2',
-              text,
-              flags=re.MULTILINE
-          )
-
-          # --------------------------------------------------------
-          # Keep architecture "all"
-          # --------------------------------------------------------
-
-          if re.search(
-              r'^PKGARCH:=',
-              text,
-              flags=re.MULTILINE
-          ):
-              text = re.sub(
-                  r'^PKGARCH:=.*$',
-                  'PKGARCH:=all',
-                  text,
-                  flags=re.MULTILINE
-              )
-
-          # --------------------------------------------------------
-          # Keep original TencentCloud dependencies:
-          #
-          #   openssl-util
-          #   curl
-          #
-          # Do not add kernel dependencies.
-          # --------------------------------------------------------
-
-          text = re.sub(
-              r'^\s*DEPENDS:=.*$',
-              '\tDEPENDS:=+openssl-util +curl',
-              text,
-              flags=re.MULTILINE
-          )
-
-          path.write_text(text)
-          PY
-
-          echo "============================================================"
-          echo "Patched TencentCloud Makefile"
-          echo "============================================================"
-
-          cat "$MAKEFILE"
-
-
-      # ============================================================
-      # 10. Configure minimal package build
-      # ============================================================
-
-      - name: Configure minimal package build
-        working-directory: sdk
-        shell: bash
-        run: |
-          set -eux
-
-          # Start from a clean minimal configuration.
-          rm -f .config
-
-          # Create a proper .config file with correct syntax
-          cat > .config <<'EOF'
-          CONFIG_ALL=n
-          CONFIG_ALL_KMODS=n
-          CONFIG_ALL_NONSHARED=n
-          CONFIG_AUTOREMOVE=n
-          CONFIG_DEVEL=y
-          CONFIG_PACKAGE_luci-app-tencentddns=m
-          EOF
-
-          echo "============================================================"
-          echo "Initial .config before defconfig"
-          echo "============================================================"
-          cat .config
-
-          # Run defconfig to resolve platform defaults
-          make defconfig
-
-          echo "============================================================"
-          echo "After defconfig - checking for kernel modules"
-          echo "============================================================"
-
-          # Count and show kernel modules before cleanup
-          KMOD_BEFORE=$(grep -c '^CONFIG_PACKAGE_kmod-' .config || true)
-          echo "Kernel modules before cleanup: $KMOD_BEFORE"
-
-          if [ "$KMOD_BEFORE" -gt 0 ]; then
-            echo "Kernel modules found, removing them..."
-            grep '^CONFIG_PACKAGE_kmod-' .config || true
-          fi
-
-          # Remove ALL kernel module entries
-          sed -i '/^CONFIG_PACKAGE_kmod-/d' .config
-
-          # Also ensure our target package is still set correctly
-          if ! grep -q '^CONFIG_PACKAGE_luci-app-tencentddns=' .config; then
-            echo "Re-adding target package..."
-            echo "CONFIG_PACKAGE_luci-app-tencentddns=m" >> .config
-          fi
-
-          # Run defconfig again to resolve any broken dependencies
-          make defconfig
-
-          # Final cleanup - remove any kmods that got re-added
-          sed -i '/^CONFIG_PACKAGE_kmod-/d' .config
-
-          # Ensure target package is still there
-          if ! grep -q '^CONFIG_PACKAGE_luci-app-tencentddns=' .config; then
-            echo "CONFIG_PACKAGE_luci-app-tencentddns=m" >> .config
-          fi
-
-          echo "============================================================"
-          echo "Final configuration summary"
-          echo "============================================================"
-          echo "Kernel modules in config:"
-          grep -c '^CONFIG_PACKAGE_kmod-' .config || echo "0 - None found ✓"
-
-          echo ""
-          echo "Target package:"
-          grep '^CONFIG_PACKAGE_luci-app-tencentddns' .config || echo "NOT FOUND!"
-
-          echo ""
-          echo "Configuration check:"
-          grep -E '^CONFIG_(ALL|ALL_KMODS|ALL_NONSHARED|AUTOREMOVE|PACKAGE_luci-app-tencentddns)' .config || true
-
-
-      # ============================================================
-      # 11. Verify minimal package configuration
-      # ============================================================
-
-      - name: Verify minimal package configuration
-        working-directory: sdk
-        shell: bash
-        run: |
-          set -eux
-
-          echo "============================================================"
-          echo "Verifying minimal package configuration"
-          echo "============================================================"
-
-          # Check ALL_KMODS is not set
-          if grep -q '^CONFIG_ALL_KMODS=y' .config; then
-            echo "ERROR: CONFIG_ALL_KMODS is set to y"
-            exit 1
-          fi
-
-          # Check ALL_NONSHARED is not set
-          if grep -q '^CONFIG_ALL_NONSHARED=y' .config; then
-            echo "ERROR: CONFIG_ALL_NONSHARED is set to y"
-            exit 1
-          fi
-
-          # Check for any kernel modules - if any exist, it's a problem
-          KMOD_COUNT=$(grep -c '^CONFIG_PACKAGE_kmod-' .config || true)
-          if [ "$KMOD_COUNT" -gt 0 ]; then
-            echo "ERROR: $KMOD_COUNT kernel module(s) are still selected:"
-            grep '^CONFIG_PACKAGE_kmod-' .config
-            exit 1
+          # 如果当前仓库根目录就有主题源码文件夹，直接复制
+          if [ -d "${{ env.PACKAGE_NAME }}" ]; then
+            cp -r ${{ env.PACKAGE_NAME }} openwrt-sdk/package/
           else
-            echo "✓ No kernel modules selected"
+            # 否则从 GitHub 克隆最新源码
+            cd openwrt-sdk/package
+            git clone https://github.com/zzsj0928/luci-theme-liquid.git
           fi
+          echo "Theme source prepared"
 
-          # Verify our target package is configured
-          if ! grep -q '^CONFIG_PACKAGE_luci-app-tencentddns=m' .config; then
-            echo "ERROR: Target package not configured as module"
-            grep '^CONFIG_PACKAGE_luci-app-tencentddns' .config || echo "Not found"
-            exit 1
-          else
-            echo "✓ Target package configured correctly"
-          fi
-
-          echo "============================================================"
-          echo "✅ Verification passed successfully"
-          echo "============================================================"
-
-
-      # ============================================================
-      # 12. Build only TencentCloud DDNS
-      # ============================================================
-
-      - name: Build TencentCloud DDNS
-        working-directory: sdk
-        shell: bash
+      # 6. 配置编译（只编译指定包）
+      - name: Configure build
         run: |
-          set -eux
+          cd openwrt-sdk
+          # 创建最小化配置，只编译我们的包
+          echo "CONFIG_TARGET_armsr=y" > .config
+          echo "CONFIG_TARGET_armsr_armv8=y" >> .config
+          echo "CONFIG_TARGET_armsr_armv8_DEVICE_generic=y" >> .config
+          echo "CONFIG_PACKAGE_luci-theme-liquid=y" >> .config
+          echo "CONFIG_ALL_KMODS=n" >> .config
+          echo "CONFIG_ALL_NONSHARED=n" >> .config
+          # 确保生成 .apk 包
+          echo "CONFIG_USE_APK=y" >> .config
+          # 禁用不必要的选项以加速编译
+          echo "CONFIG_IMAGEOPT=n" >> .config
+          echo "CONFIG_TARGET_IMAGES_GZIP=n" >> .config
+          make defconfig
+          echo "Configuration complete"
 
-          echo "============================================================"
-          echo "Building ${PACKAGE_NAME}"
-          echo "============================================================"
-
-          # Clean and compile
-          make \
-            package/${PACKAGE_DIR}/{clean,compile} \
-            V=s \
-            -j"$(nproc)"
-
-
-      # ============================================================
-      # 13. Find generated APK - FINAL FIX: Use multiple patterns
-      # ============================================================
-
-      - name: Find generated APK
-        shell: bash
+      # 7. 编译主题
+      - name: Compile theme package
         run: |
-          set -eux
+          cd openwrt-sdk
+          # 只编译指定的包，-j$(nproc) 使用所有 CPU 核心
+          make package/luci-theme-liquid/compile -j$(nproc) V=s
+          echo "Compilation finished"
 
-          echo "============================================================"
-          echo "Searching for generated APK files"
-          echo "============================================================"
-
-          SDK_BIN="$GITHUB_WORKSPACE/sdk/bin"
-
-          echo "Full directory tree under sdk/bin:"
-          find "$SDK_BIN" -type f -name "*.apk" | sort || echo "No APK files found"
-
-          echo ""
-          echo "============================================================"
-          echo "Looking specifically for TencentCloud DDNS APK"
-          echo "============================================================"
-
-          # Try multiple patterns
-          echo "Pattern 1: ${PACKAGE_NAME}-*.apk (hyphen)"
-          find "$SDK_BIN" -type f -name "${PACKAGE_NAME}-*.apk" | sort || true
-
-          echo ""
-          echo "Pattern 2: ${PACKAGE_NAME}_*.apk (underscore)"
-          find "$SDK_BIN" -type f -name "${PACKAGE_NAME}_*.apk" | sort || true
-
-          echo ""
-          echo "Pattern 3: *${PACKAGE_NAME}*.apk (wildcard)"
-          find "$SDK_BIN" -type f -name "*${PACKAGE_NAME}*.apk" | sort || true
-
-          echo ""
-          echo "Pattern 4: *tencentddns*.apk"
-          find "$SDK_BIN" -type f -name "*tencentddns*.apk" | sort || true
-
-
-      # ============================================================
-      # 14. Collect APK - FINAL FIX: Use comprehensive search
-      # ============================================================
-
-      - name: Collect APK
-        shell: bash
+      # 8. 查找并准备编译产物
+      - name: Collect artifacts
         run: |
-          set -eux
+          # 查找所有 .apk 文件（包含新格式）
+          find openwrt-sdk -name "*.apk" -type f -exec cp {} ./ \;
+          # 如果找不到 .apk，尝试查找 .ipk（兼容回退）
+          find openwrt-sdk -name "*.ipk" -type f -exec cp {} ./ \;
+          # 列出找到的文件
+          ls -la *.apk 2>/dev/null || ls -la *.ipk 2>/dev/null
+          echo "Artifacts collected"
 
-          mkdir -p "$GITHUB_WORKSPACE/dist"
-
-          SDK_BIN="$GITHUB_WORKSPACE/sdk/bin"
-
-          # Use a comprehensive search pattern
-          # Find ANY APK file that contains the package name
-          mapfile -t APK_FILES < <(
-            find "$SDK_BIN" -type f -name "*${PACKAGE_NAME}*.apk" 2>/dev/null || true
-          )
-
-          # If none found, try with tencentddns
-          if [ "${#APK_FILES[@]}" -eq 0 ]; then
-            echo "Trying alternative pattern: *tencentddns*.apk"
-            mapfile -t APK_FILES < <(
-              find "$SDK_BIN" -type f -name "*tencentddns*.apk" 2>/dev/null || true
-            )
-          fi
-
-          # If still none, list everything for debugging
-          if [ "${#APK_FILES[@]}" -eq 0 ]; then
-            echo "ERROR: No TencentCloud DDNS APK generated."
-
-            echo ""
-            echo "All files in sdk/bin:"
-            find "$SDK_BIN" -type f | sort
-
-            echo ""
-            echo "All APK files:"
-            find "$SDK_BIN" -type f -name "*.apk" | sort || echo "No APK files at all"
-
-            exit 1
-          fi
-
-          echo "Found ${#APK_FILES[@]} APK file(s):"
-          for apk in "${APK_FILES[@]}"; do
-            echo "  - $apk"
-          done
-
-          # Copy all found files
-          for apk in "${APK_FILES[@]}"; do
-            cp "$apk" "$GITHUB_WORKSPACE/dist/"
-          done
-
-          # Generate SHA256 checksums
-          cd "$GITHUB_WORKSPACE/dist"
-          sha256sum *.apk > SHA256SUMS
-
-          echo "============================================================"
-          echo "Final artifact contents"
-          echo "============================================================"
-
-          ls -lh "$GITHUB_WORKSPACE/dist"
-
-          echo ""
-          file "$GITHUB_WORKSPACE/dist/"*.apk
-
-
-      # ============================================================
-      # 15. Upload artifact
-      # ============================================================
-
-      - name: Upload APK artifact
+      # 9. 上传编译产物（作为 Actions 的下载文件）
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: tencentcloud-ddns-openwrt-25.12.5
-          path: dist/
-          if-no-files-found: error
-
-
-      # ============================================================
-      # 16. GitHub Release
-      # ============================================================
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: openwrt-25.12.5-build-${{ github.run_number }}
-          name: TencentCloud DDNS APK - OpenWrt 25.12.5 build ${{ github.run_number }}
-          generate_release_notes: true
-          files: |
-            dist/*.apk
-            dist/SHA256SUMS
+          name: liquid-theme-25.12.5-armv8
+          path: |
+            *.apk
+            *.ipk
+          retention-days: 30
+          compression-level: 0
