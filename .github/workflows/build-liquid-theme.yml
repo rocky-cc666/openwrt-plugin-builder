@@ -1,5 +1,4 @@
-# .github/workflows/build.yml
-name: Build Liquid Theme APK for OpenWrt 25.12.5
+name: Build Theme
 
 on:
   workflow_dispatch:
@@ -10,220 +9,77 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # ============================================================
-      # 步骤 1: 安装编译依赖
-      # ============================================================
-      - name: 安装编译依赖
+      - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            ccache \
-            file \
-            g++ \
-            gawk \
-            gettext \
-            git \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libssl-dev \
-            python3 \
-            python3-pip \
-            rsync \
-            unzip \
-            wget \
-            xsltproc \
-            zlib1g-dev \
-            zstd
+          sudo apt-get install -y build-essential ccache file g++ gawk gettext git \
+            libncurses5-dev libncursesw5-dev libssl-dev python3 python3-pip \
+            rsync unzip wget xsltproc zlib1g-dev zstd
 
-      # ============================================================
-      # 步骤 2: 下载 SDK（使用从官方目录确认的正确文件名）
-      #         注意：gcc 版本是 14.3.0，不是 13.3.0
-      # ============================================================
-      - name: 下载 OpenWrt SDK
+      - name: Download SDK
         run: |
-          # 从 https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/
-          # 确认的实际文件名：gcc-14.3.0
           SDK_URL="https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-sdk-25.12.5-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
-          
-          echo "=========================================="
-          echo "SDK 下载地址:"
-          echo "${SDK_URL}"
-          echo "=========================================="
-          
-          wget -q --show-progress "${SDK_URL}" -O sdk.tar.zst
-          
-          if [ ! -f sdk.tar.zst ] || [ ! -s sdk.tar.zst ]; then
-            echo "❌ SDK 下载失败！"
-            echo "请手动访问以下地址确认文件名："
-            echo "https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/"
-            exit 1
-          fi
-          
-          echo "✅ SDK 下载成功 (大小: $(du -h sdk.tar.zst | cut -f1))"
-          echo "正在解压..."
+          wget -q "${SDK_URL}" -O sdk.tar.zst
           tar --zstd -xf sdk.tar.zst
-          
           mv openwrt-sdk-* openwrt-sdk
-          
-          if [ -d "openwrt-sdk" ]; then
-            echo "✅ SDK 解压完成"
-          else
-            echo "❌ SDK 解压失败"
-            exit 1
-          fi
 
-      # ============================================================
-      # 步骤 3: 验证 SDK
-      # ============================================================
-      - name: 验证 SDK
+      - name: Verify SDK
         run: |
           cd openwrt-sdk
-          if [ -f "Makefile" ]; then
-            echo "✅ SDK 验证通过"
-          else
-            echo "❌ SDK 验证失败，未找到 Makefile"
-            exit 1
-          fi
+          test -f Makefile
 
-      # ============================================================
-      # 步骤 4: 更新 feeds（软件源）
-      # ============================================================
-      - name: 更新 feeds
+      - name: Update feeds
         run: |
           cd openwrt-sdk
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          echo "✅ feeds 更新完成"
 
-      # ============================================================
-      # 步骤 5: 克隆主题源码
-      # ============================================================
-      - name: 准备主题源码
+      - name: Get theme
         run: |
           cd openwrt-sdk/package
           git clone --depth 1 https://github.com/zzsj0928/luci-theme-liquid.git
-          
-          if [ -d "luci-theme-liquid" ]; then
-            echo "✅ 主题源码克隆成功"
-          else
-            echo "❌ 主题源码克隆失败"
-            exit 1
-          fi
 
-      # ============================================================
-      # 步骤 6: 配置编译参数
-      # ============================================================
-      - name: 配置编译参数
+      - name: Config
         run: |
           cd openwrt-sdk
-          
           cat > .config << 'EOF'
-          # 目标平台：ARMv8 (R2S / E20C)
           CONFIG_TARGET_armsr=y
           CONFIG_TARGET_armsr_armv8=y
           CONFIG_TARGET_armsr_armv8_DEVICE_generic=y
-          
-          # 编译主题包
           CONFIG_PACKAGE_luci-theme-liquid=y
-          
-          # 使用 APK 包格式（OpenWrt 25.12+）
           CONFIG_USE_APK=y
-          
-          # 加速编译：禁用不必要的内容
           CONFIG_ALL_KMODS=n
           CONFIG_ALL_NONSHARED=n
           CONFIG_TARGET_IMAGES_GZIP=n
           CONFIG_IMAGEOPT=n
           EOF
-          
-          echo "配置内容:"
-          cat .config
-          
           make defconfig
-          echo "✅ 编译配置完成"
 
-      # ============================================================
-      # 步骤 7: 执行编译
-      # ============================================================
-      - name: 编译主题包
+      - name: Compile
         run: |
           cd openwrt-sdk
-          
-          echo "=========================================="
-          echo "开始编译 luci-theme-liquid..."
-          echo "使用 $(nproc) 个 CPU 核心"
-          echo "=========================================="
-          
           make package/luci-theme-liquid/compile -j$(nproc) V=s
-          
-          if [ $? -eq 0 ]; then
-            echo "✅ 编译成功！"
-          else
-            echo "❌ 编译失败，请查看上方日志"
-            exit 1
-          fi
 
-      # ============================================================
-      # 步骤 8: 收集编译产物
-      # ============================================================
-      - name: 收集编译产物
+      - name: Collect all APKs
         run: |
-          cd openwrt-sdk
+          echo "=========================================="
+          echo "查找所有 .apk 文件..."
+          echo "=========================================="
           
-          echo "正在查找编译产物..."
-          
-          # 查找 .apk 文件（OpenWrt 25.12+ 格式）
-          APK_FILES=$(find . -name "*.apk" -type f)
-          if [ -n "$APK_FILES" ]; then
-            echo "找到 .apk 文件:"
-            echo "$APK_FILES"
-            find . -name "*.apk" -type f -exec cp -v {} ../ \;
-          fi
-          
-          # 如果没找到 .apk，尝试查找 .ipk（兼容旧格式）
-          if [ -z "$APK_FILES" ]; then
-            IPK_FILES=$(find . -name "*.ipk" -type f)
-            if [ -n "$IPK_FILES" ]; then
-              echo "找到 .ipk 文件:"
-              echo "$IPK_FILES"
-              find . -name "*.ipk" -type f -exec cp -v {} ../ \;
-            fi
-          fi
-          
-          cd ..
+          # 在 SDK 目录中查找所有 .apk
+          find openwrt-sdk -name "*.apk" -type f | while read file; do
+            echo "找到: $file"
+            cp -v "$file" ./
+          done
           
           echo "=========================================="
-          echo "📦 编译产物列表:"
-          ls -lh *.apk 2>/dev/null || ls -lh *.ipk 2>/dev/null || echo "⚠️ 未找到任何产物"
+          echo "当前目录下的 .apk 文件:"
+          ls -lh *.apk 2>/dev/null || echo "⚠️ 没有找到 .apk 文件"
           echo "=========================================="
 
-      # ============================================================
-      # 步骤 9: 上传产物到 GitHub Actions
-      # ============================================================
-      - name: 上传 APK 包
+      - name: Upload all APKs
         uses: actions/upload-artifact@v4
         with:
-          name: liquid-theme-25.12.5-armsr-armv8
-          path: |
-            *.apk
-            *.ipk
+          name: all-apks
+          path: "*.apk"
           retention-days: 30
-          if-no-files-found: warn
-
-      # ============================================================
-      # 步骤 10: 完成提示
-      # ============================================================
-      - name: 编译完成
-        run: |
-          echo "=========================================="
-          echo "🎉 编译流程完成！"
-          echo ""
-          echo "📥 下载方式："
-          echo "   1. 点击页面顶部的 'Summary'"
-          echo "   2. 滚动到底部 'Artifacts' 区域"
-          echo "   3. 下载 liquid-theme-25.12.5-armsr-armv8.zip"
-          echo ""
-          echo "📦 安装命令（在路由器上执行）："
-          echo "   apk add --allow-untrusted /tmp/主题文件名.apk"
-          echo "=========================================="
