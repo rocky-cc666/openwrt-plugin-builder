@@ -16,6 +16,17 @@ jobs:
     - name: 检出仓库源码
       uses: actions/checkout@v4
 
+    - name: 清理磁盘空间 (防止 No space left on device)
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/share/swift
+        docker image prune --all --force || true
+        sudo apt-get clean
+        df -h
+
     - name: 初始化编译环境
       run: |
         sudo apt-get update
@@ -71,7 +82,7 @@ jobs:
         mkdir -p "$TARGET_DIR"
         rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_DIR/" "$TARGET_DIR/"
 
-        # 4. 刷新 feeds 依赖
+        # 4. 只更新安装必要的 feeds
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
 
