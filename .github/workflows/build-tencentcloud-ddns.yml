@@ -7,6 +7,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  # ⚠️ 请在此处填入你的插件源码仓库地址（如果与当前 Workflow 仓库不一致）
+  PLUGIN_URL: "https://github.com/TencentCloud/tencentcloud-openwrt-plugin-ddns.git"
+
 jobs:
   build:
     name: Build for rockchip-armv8
@@ -61,22 +65,27 @@ jobs:
 
         rm openwrt-sdk.archive sha256sums
 
-    - name: 自动对齐包名并配置编译
+    - name: 克隆或定位插件源码
       run: |
-        # 1. 忽略大小写查找 Makefile
+        # 查找当前仓库是否已包含 Makefile
         MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE" -iname "makefile" -not -path "*/sdk/*" | head -n 1)
-        
+
         if [ -z "$MAKEFILE_PATH" ]; then
-          echo "=== 仓库当前文件目录结构如下 ==="
-          find "$GITHUB_WORKSPACE" -maxdepth 3 -not -path "*/.git*" -not -path "*/sdk*"
-          echo "::error::仓库中未找到任何 Makefile 文件，请检查仓库根目录或子目录下是否存在 Makefile！"
+          echo "本地未找到 Makefile，准备从远端克隆插件源码: $PLUGIN_URL"
+          rm -rf plugin_src
+          git clone --depth 1 "$PLUGIN_URL" plugin_src
+          MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE/plugin_src" -iname "makefile" | head -n 1)
+        fi
+
+        if [ -z "$MAKEFILE_PATH" ]; then
+          echo "::error::未能找到有效的 Makefile，请确认 PLUGIN_URL 是否填对了仓库地址！"
           exit 1
         fi
 
         SRC_DIR=$(dirname "$MAKEFILE_PATH")
-        echo "找到 Makefile 路径: $MAKEFILE_PATH"
+        echo "定位到源码 Makefile 路径: $MAKEFILE_PATH"
 
-        # 2. 从 Makefile 中提取 PKG_NAME
+        # 解析 PKG_NAME
         PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
         if [ -z "$PKG_NAME" ]; then
           PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
@@ -85,20 +94,16 @@ jobs:
           PKG_NAME="tencentcloud-ddns"
         fi
 
-        echo "解析到真实 OpenWrt 包名为: $PKG_NAME"
+        echo "解析到的 OpenWrt 包名为: $PKG_NAME"
         echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
 
-        # 3. 创建目标目录并同步源码
+        # 复制到 SDK 对应目录
         TARGET_DIR="$GITHUB_WORKSPACE/sdk/package/$PKG_NAME"
         mkdir -p "$TARGET_DIR"
-        
-        rsync -av \
-          --exclude='sdk' \
-          --exclude='.git' \
-          --exclude='.github' \
-          "$SRC_DIR/" "$TARGET_DIR/"
+        rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_DIR/" "$TARGET_DIR/"
 
-        # 4. 配置 SDK 并写入编译目标
+    - name: 配置 SDK 并执行编译
+      run: |
         cd "$GITHUB_WORKSPACE/sdk"
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
@@ -107,9 +112,6 @@ jobs:
         echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
         make defconfig
 
-    - name: 执行插件编译 (.apk)
-      run: |
-        cd "$GITHUB_WORKSPACE/sdk"
         make package/$PKG_NAME/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk 安装包
