@@ -17,10 +17,10 @@ jobs:
       matrix:
         include:
           # 适用于 NanoPi R2S (RK3328) 与 E20C 等 Rockchip ARMv8 设备
-          # 使用支持 APK 系统的官方稳定版 SDK
+          # 使用 OpenWrt 24.10 正式稳定版 SDK (原生支持 apk 包格式)
           - target: rockchip
             subtarget: armv8
-            sdk_url: https://downloads.openwrt.org/releases/24.10.0-rc1/targets/rockchip/armv8/openwrt-sdk-24.10.0-rc1-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz
+            sdk_url: https://downloads.openwrt.org/releases/24.10.0/targets/rockchip/armv8/openwrt-sdk-24.10.0-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz
 
     steps:
     - name: 检出仓库源码
