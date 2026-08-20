@@ -17,9 +17,10 @@ jobs:
       matrix:
         include:
           # 适用于 NanoPi R2S (RK3328) 与 E20C 等 Rockchip ARMv8 设备
+          # 使用支持 APK 系统的官方稳定版 SDK
           - target: rockchip
             subtarget: armv8
-            target_url: https://downloads.openwrt.org/snapshots/targets/rockchip/armv8/
+            sdk_url: https://downloads.openwrt.org/releases/24.10.0-rc1/targets/rockchip/armv8/openwrt-sdk-24.10.0-rc1-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz
 
     steps:
     - name: 检出仓库源码
@@ -29,37 +30,11 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential clang flex bison gawk gettext git \
-          libncurses5-dev libssl-dev python3-setuptools python3-pip rsync unzip zlib1g-dev curl
+          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev
 
-    - name: 动态获取并解压 OpenWrt SDK
+    - name: 下载并解压 OpenWrt SDK
       run: |
-        SDK_URL=$(python3 -c "
-        import urllib.request, json, urllib.parse
-        
-        base_url = '${{ matrix.target_url }}'
-        req = urllib.request.Request(base_url + 'profiles.json', headers={'User-Agent': 'Mozilla/5.0'})
-        
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode())
-            # 从 profiles.json 中精准提取相对路径并拼接完整 URL
-            relative_path = data.get('sdk', {}).get('file', '')
-            if not relative_path:
-                # 备用方案：自动匹配 profiles 中的 sdk 格式
-                code = data.get('version_code', '')
-                gcc = data.get('gcc', '13.3.0')
-                relative_path = f'openwrt-sdk-{code}-rockchip-armv8_gcc-{gcc}_musl.Linux-x86_64.tar.xz'
-            
-            print(urllib.parse.urljoin(base_url, relative_path))
-        ")
-
-        if [ -z "$SDK_URL" ]; then
-          echo "错误：无法获取 SDK 下载 URL！"
-          exit 1
-        fi
-
-        echo "正在下载 SDK: $SDK_URL"
-        wget -q -U "Mozilla/5.0" "$SDK_URL" -O openwrt-sdk.tar.xz
-
+        wget -q ${{ matrix.sdk_url }} -O openwrt-sdk.tar.xz
         mkdir -p sdk
         tar -xJf openwrt-sdk.tar.xz -C sdk --strip-components=1
         rm openwrt-sdk.tar.xz
