@@ -3,42 +3,61 @@ name: Build tencentcloud-ddns Plugin
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # 允许在 GitHub 界面手动触发编译
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
+    name: Build for ${{ matrix.target }}-${{ matrix.subtarget }}
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 适用于 NanoPi R2S (Rockchip RK3328)
+          - target: rockchip
+            subtarget: armv8
+            sdk_url: https://downloads.openwrt.org/releases/25.12.5/targets/rockchip/armv8/openwrt-sdk-25.12.5-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz
+
     steps:
-    - name: 检出当前仓库代码
+    - name: 检出仓库源码
       uses: actions/checkout@v4
 
     - name: 初始化编译环境
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential clang flex bison gawk gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev
+        sudo apt-get install -y build-essential clang flex bison gawk gettext git \
+          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev
 
-    - name: 下载 OpenWrt SDK
+    - name: 下载并解压 OpenWrt SDK
       run: |
-        # 根据你的路由器架构（如 x86_64, aarch64_cortex-a53 等）下载对应的 OpenWrt SDK 并解压
-        wget https://downloads.openwrt.org/releases/23.05.0/targets/x86/64/openwrt-sdk-23.05.0-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-        tar -xJf openwrt-sdk-*.tar.xz
-        mv openwrt-sdk-* sdk
+        wget -q ${{ matrix.sdk_url }} -O openwrt-sdk.tar.xz
+        mkdir -p sdk
+        tar -xJf openwrt-sdk.tar.xz -C sdk --strip-components=1
+        rm openwrt-sdk.tar.xz
+
+    - name: 载入插件源码与依赖
+      run: |
+        cd sdk
+        # 将当前仓库的插件源码复制到 package 目录
+        mkdir -p package/tencentcloud-ddns
+        cp -r ../* package/tencentcloud-ddns/ 2>/dev/null || true
+        
+        # 更新并安装 feeds
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
     - name: 编译插件
       run: |
         cd sdk
-        # 将你的插件复制或链接到 SDK 的 package 目录下
-        cp -r ../your-plugin-dir package/
-        # 更新并安装 feed（如果需要依赖）
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-        # 配置并编译指定包
         make defconfig
-        make package/your-plugin-dir/compile V=s
+        # 编译插件包，V=s 输出详细过程
+        make package/tencentcloud-ddns/compile V=s -j$(nproc)
 
-    - name: 上传生成的 ipk 文件
+    - name: 整理并上传 ipk 安装包
       uses: actions/upload-artifact@v4
       with:
-        name: openwrt-plugin-ipk
-        path: sdk/bin/packages/
+        name: tencentcloud-ddns-${{ matrix.target }}-${{ matrix.subtarget }}
+        path: sdk/bin/packages/${{ matrix.target }}/base/*.ipk
