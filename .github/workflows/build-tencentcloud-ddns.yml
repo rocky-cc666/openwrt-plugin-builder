@@ -29,22 +29,26 @@ jobs:
           sudo apt-get update
 
           sudo apt-get install -y \
+            bc \
             build-essential \
             clang \
             flex \
             bison \
+            g++ \
             gawk \
             gettext \
             git \
             libncurses-dev \
             libssl-dev \
             python3 \
-            python3-distutils \
+            python3-dev \
+            python3-setuptools \
             rsync \
+            swig \
             unzip \
             wget \
-            curl \
             file \
+            curl \
             zstd \
             xz-utils \
             ca-certificates
@@ -58,7 +62,7 @@ jobs:
 
           SDK_URL="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/armsr/armv8/openwrt-sdk-${OPENWRT_VERSION}-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
 
-          echo "SDK:"
+          echo "Downloading OpenWrt SDK:"
           echo "$SDK_URL"
 
           curl -fL \
@@ -73,8 +77,9 @@ jobs:
 
           rm -f "$GITHUB_WORKSPACE/sdk.tar.zst"
 
-          echo "OpenWrt SDK:"
-          "$GITHUB_WORKSPACE/sdk/scripts/feeds" --help >/dev/null
+          test -x "$GITHUB_WORKSPACE/sdk/scripts/feeds"
+
+          echo "OpenWrt SDK ready."
 
       - name: Clone TencentCloud DDNS source
         shell: bash
@@ -92,26 +97,25 @@ jobs:
           echo "TencentCloud source revision:"
           git -C "$GITHUB_WORKSPACE/tencentcloud-source" rev-parse HEAD
 
-          echo "Repository contents:"
-          find "$GITHUB_WORKSPACE/tencentcloud-source" \
-            -maxdepth 3 \
-            -type f \
-            | sort
-
       - name: Locate original OpenWrt package
         shell: bash
         run: |
           set -eux
-
-          PACKAGE_DIR=""
 
           if [ -d "$GITHUB_WORKSPACE/tencentcloud-source/tencentcloud_ddns" ]; then
             PACKAGE_DIR="$GITHUB_WORKSPACE/tencentcloud-source/tencentcloud_ddns"
           elif [ -d "$GITHUB_WORKSPACE/tencentcloud-source/package/tencentcloud_ddns" ]; then
             PACKAGE_DIR="$GITHUB_WORKSPACE/tencentcloud-source/package/tencentcloud_ddns"
           else
-            echo "ERROR: TencentCloud OpenWrt package directory was not found."
-            find "$GITHUB_WORKSPACE/tencentcloud-source" -maxdepth 5 -type f -name Makefile -print
+            echo "ERROR: TencentCloud package directory not found."
+
+            find \
+              "$GITHUB_WORKSPACE/tencentcloud-source" \
+              -maxdepth 5 \
+              -type f \
+              -name Makefile \
+              -print
+
             exit 1
           fi
 
@@ -120,15 +124,16 @@ jobs:
           echo "Using package:"
           echo "$PACKAGE_DIR"
 
-      - name: Inspect original Makefile
+      - name: Show original package
         shell: bash
         run: |
           set -eux
 
           echo "===== Original Makefile ====="
+
           cat "$PACKAGE_DIR/Makefile"
 
-      - name: Prepare OpenWrt package
+      - name: Copy package into SDK
         shell: bash
         run: |
           set -eux
@@ -142,14 +147,14 @@ jobs:
             "$PACKAGE_DIR/." \
             "$GITHUB_WORKSPACE/sdk/package/tencentcloud_ddns/"
 
-          echo "===== Package files ====="
+          echo "===== Package tree ====="
 
           find \
             "$GITHUB_WORKSPACE/sdk/package/tencentcloud_ddns" \
             -type f \
             | sort
 
-      - name: Patch package for OpenWrt 25.12
+      - name: Adapt package for OpenWrt 25.12
         shell: bash
         run: |
           set -eux
@@ -164,33 +169,33 @@ jobs:
           import sys
 
           path = pathlib.Path(sys.argv[1])
+
           text = path.read_text()
 
-          # Package name
           text = re.sub(
               r'^PKG_NAME:=.*$',
               'PKG_NAME:=luci-app-tencentddns',
               text,
-              flags=re.MULTILINE,
+              flags=re.MULTILINE
           )
 
-          # New package release
           text = re.sub(
               r'^PKG_RELEASE:=.*$',
               'PKG_RELEASE:=2',
               text,
-              flags=re.MULTILINE,
+              flags=re.MULTILINE
           )
 
-          # OpenWrt 25.x uses apk.
-          # Keep the package architecture as "all" because the plugin
-          # contains only LuCI/Lua/shell/configuration files.
-          if re.search(r'^PKGARCH:=', text, flags=re.MULTILINE):
+          if re.search(
+              r'^PKGARCH:=',
+              text,
+              flags=re.MULTILINE
+          ):
               text = re.sub(
                   r'^PKGARCH:=.*$',
                   'PKGARCH:=all',
                   text,
-                  flags=re.MULTILINE,
+                  flags=re.MULTILINE
               )
           else:
               text += '\nPKGARCH:=all\n'
@@ -199,6 +204,7 @@ jobs:
           PY
 
           echo "===== Patched Makefile ====="
+
           cat "$MAKEFILE"
 
       - name: Update OpenWrt feeds
@@ -208,10 +214,9 @@ jobs:
           set -eux
 
           ./scripts/feeds update -a
-
           ./scripts/feeds install -a
 
-      - name: Configure OpenWrt SDK
+      - name: Configure SDK
         working-directory: sdk
         shell: bash
         run: |
@@ -219,7 +224,7 @@ jobs:
 
           make defconfig
 
-      - name: Build TencentCloud DDNS package
+      - name: Build TencentCloud DDNS
         working-directory: sdk
         shell: bash
         run: |
@@ -227,75 +232,67 @@ jobs:
 
           make package/tencentcloud_ddns/clean V=s || true
 
-          make package/tencentcloud_ddns/compile \
+          make \
+            package/tencentcloud_ddns/compile \
             V=s \
             -j"$(nproc)"
 
-      - name: Find generated APK
+      - name: Find APK
         shell: bash
         run: |
           set -eux
 
-          echo "===== Generated packages ====="
+          echo "===== All APK packages ====="
 
-          find "$GITHUB_WORKSPACE/sdk/bin/packages" \
+          find \
+            "$GITHUB_WORKSPACE/sdk/bin/packages" \
             -type f \
-            \( -name "*.apk" -o -name "*.ipk" \) \
+            -name "*.apk" \
             -print \
             | sort
 
-          echo "===== TencentCloud DDNS packages ====="
+          echo
+          echo "===== TencentCloud DDNS APK ====="
 
-          find "$GITHUB_WORKSPACE/sdk/bin/packages" \
+          find \
+            "$GITHUB_WORKSPACE/sdk/bin/packages" \
             -type f \
-            \( \
-              -name "luci-app-tencentddns_*.apk" \
-              -o \
-              -name "luci-app-tencentddns_*.ipk" \
-            \) \
+            -name "luci-app-tencentddns_*.apk" \
             -print \
             | sort
 
-      - name: Validate APK
+      - name: Collect APK
         shell: bash
         run: |
           set -eux
 
           mkdir -p "$GITHUB_WORKSPACE/dist"
 
-          APK_COUNT=0
-
-          while IFS= read -r file; do
-            echo "Found APK: $file"
-
-            cp "$file" "$GITHUB_WORKSPACE/dist/"
-
-            APK_COUNT=$((APK_COUNT + 1))
-          done < <(
-            find "$GITHUB_WORKSPACE/sdk/bin/packages" \
+          mapfile -t APK_FILES < <(
+            find \
+              "$GITHUB_WORKSPACE/sdk/bin/packages" \
               -type f \
               -name "luci-app-tencentddns_*.apk"
           )
 
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "ERROR: No APK package was generated."
+          if [ "${#APK_FILES[@]}" -eq 0 ]; then
+            echo "ERROR: No TencentCloud DDNS APK was generated."
             exit 1
           fi
 
-          echo "APK count: $APK_COUNT"
-
-          echo "===== APK files ====="
-          ls -lh "$GITHUB_WORKSPACE/dist"
-
-          echo "===== File information ====="
-
-          file "$GITHUB_WORKSPACE/dist/"*.apk
-
-          echo "===== SHA256 ====="
+          for apk in "${APK_FILES[@]}"; do
+            cp "$apk" "$GITHUB_WORKSPACE/dist/"
+          done
 
           sha256sum \
             "$GITHUB_WORKSPACE/dist/"*.apk \
-            | tee "$GITHUB_WORKSPACE/dist/SHA256SUMS"
+            > "$GITHUB_WORKSPACE/dist/SHA256SUMS"
+
+          echo "===== Final APK ====="
+
+          ls -lh "$GITHUB_WORKSPACE/dist/"
+
+          file "$GITHUB_WORKSPACE/dist/"*.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -308,7 +305,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: openwrt-25.12.5-build-${{ github.run_number }}
-          name: TencentCloud DDNS APK - OpenWrt 25.12.5 #${{ github.run_number }}
+          name: TencentCloud DDNS APK - OpenWrt 25.12.5 build ${{ github.run_number }}
           generate_release_notes: true
           files: |
             dist/*.apk
