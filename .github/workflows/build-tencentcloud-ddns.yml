@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 env:
-  # ⚠️ 请在此处填入你的插件源码仓库地址（如果与当前 Workflow 仓库不一致）
-  PLUGIN_URL: "https://github.com/TencentCloud/tencentcloud-openwrt-plugin-ddns.git"
+  # 腾讯云官方 OpenWrt DDNS 插件仓库地址
+  PLUGIN_URL: "https://github.com/Tencent-Cloud-Plugins/tencentcloud-openwrt-plugin-ddns.git"
 
 jobs:
   build:
@@ -67,7 +67,7 @@ jobs:
 
     - name: 克隆或定位插件源码
       run: |
-        # 查找当前仓库是否已包含 Makefile
+        # 1. 优先检查当前 WorkSpace 本身是否已包含 Makefile
         MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE" -iname "makefile" -not -path "*/sdk/*" | head -n 1)
 
         if [ -z "$MAKEFILE_PATH" ]; then
@@ -78,14 +78,14 @@ jobs:
         fi
 
         if [ -z "$MAKEFILE_PATH" ]; then
-          echo "::error::未能找到有效的 Makefile，请确认 PLUGIN_URL 是否填对了仓库地址！"
+          echo "::error::未能找到有效的 Makefile，请确认仓库路径或 URL 是否正确！"
           exit 1
         fi
 
         SRC_DIR=$(dirname "$MAKEFILE_PATH")
         echo "定位到源码 Makefile 路径: $MAKEFILE_PATH"
 
-        # 解析 PKG_NAME
+        # 2. 解析 PKG_NAME
         PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
         if [ -z "$PKG_NAME" ]; then
           PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
@@ -97,7 +97,7 @@ jobs:
         echo "解析到的 OpenWrt 包名为: $PKG_NAME"
         echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
 
-        # 复制到 SDK 对应目录
+        # 3. 复制插件源码至 SDK 的 package 目录下
         TARGET_DIR="$GITHUB_WORKSPACE/sdk/package/$PKG_NAME"
         mkdir -p "$TARGET_DIR"
         rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_DIR/" "$TARGET_DIR/"
