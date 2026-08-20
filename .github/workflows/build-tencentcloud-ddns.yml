@@ -17,10 +17,8 @@ jobs:
       matrix:
         include:
           # 适用于 NanoPi R2S (RK3328) 与 E20C 等 Rockchip ARMv8 设备
-          # 使用 OpenWrt 24.10 正式稳定版 SDK (原生支持 apk 包格式)
           - target: rockchip
             subtarget: armv8
-            sdk_url: https://downloads.openwrt.org/releases/24.10.0/targets/rockchip/armv8/openwrt-sdk-24.10.0-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz
 
     steps:
     - name: 检出仓库源码
@@ -30,11 +28,30 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential clang flex bison gawk gettext git \
-          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev
+          libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev curl jq
 
-    - name: 下载并解压 OpenWrt SDK
+    - name: 自动抓取并解压最新 OpenWrt SDK (.apk 兼容版)
       run: |
-        wget -q ${{ matrix.sdk_url }} -O openwrt-sdk.tar.xz
+        BASE_URL="https://downloads.openwrt.org/snapshots/targets/${{ matrix.target }}/${{ matrix.subtarget }}/"
+        
+        # 1. 抓取页面 HTML 并匹配真实的 SDK 文件名
+        SDK_FILE=$(curl -sL "$BASE_URL" | grep -oE 'openwrt-sdk-[a-zA-Z0-9_.-]+\.tar\.xz' | head -n 1)
+        
+        if [ -z "$SDK_FILE" ]; then
+          echo "无法匹配 SDK 文件，尝试通过 profiles.json 获取..."
+          SDK_FILE=$(curl -sL "${BASE_URL}profiles.json" | jq -r '.sdk.file // empty')
+        fi
+
+        if [ -z "$SDK_FILE" ]; then
+          echo "错误：无法获取有效 SDK 下载文件名！"
+          exit 1
+        fi
+
+        SDK_URL="${BASE_URL}${SDK_FILE}"
+        echo "成功匹配 SDK 下载地址: $SDK_URL"
+
+        # 2. 下载并解压
+        wget -q -U "Mozilla/5.0" "$SDK_URL" -O openwrt-sdk.tar.xz
         mkdir -p sdk
         tar -xJf openwrt-sdk.tar.xz -C sdk --strip-components=1
         rm openwrt-sdk.tar.xz
