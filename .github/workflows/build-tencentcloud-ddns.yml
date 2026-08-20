@@ -33,30 +33,27 @@ jobs:
 
     - name: 动态获取并解压 OpenWrt SDK
       run: |
-        # 抓取包含所有版本的 json 索引或直接跟进 302 重定向
         SDK_URL=$(python3 -c "
-        import urllib.request, json, re
+        import urllib.request, json, urllib.parse
         
-        url = '${{ matrix.target_url }}'
-        # 优先解析 OpenWrt 官方提供的 json 配置文件
-        try:
-            req = urllib.request.Request(url + 'profiles.json', headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as resp:
-                data = json.loads(resp.read().decode())
-                # 从 json 中获取精准下载路径
-                print(url + 'openwrt-sdk-' + data['version_code'] + '-rockchip-armv8_gcc-' + data.get('gcc', '13.3.0') + '_musl.Linux-x86_64.tar.xz')
-        except Exception:
-            # 备用方案：跟进重定向抓取页面
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as resp:
-                html = resp.read().decode('utf-8', errors='ignore')
-                match = re.search(r'openwrt-sdk-[^\"]*?\.tar\.(xz|bz2|gz)', html)
-                if match:
-                    print(url + match.group(0))
+        base_url = '${{ matrix.target_url }}'
+        req = urllib.request.Request(base_url + 'profiles.json', headers={'User-Agent': 'Mozilla/5.0'})
+        
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode())
+            # 从 profiles.json 中精准提取相对路径并拼接完整 URL
+            relative_path = data.get('sdk', {}).get('file', '')
+            if not relative_path:
+                # 备用方案：自动匹配 profiles 中的 sdk 格式
+                code = data.get('version_code', '')
+                gcc = data.get('gcc', '13.3.0')
+                relative_path = f'openwrt-sdk-{code}-rockchip-armv8_gcc-{gcc}_musl.Linux-x86_64.tar.xz'
+            
+            print(urllib.parse.urljoin(base_url, relative_path))
         ")
 
         if [ -z "$SDK_URL" ]; then
-          echo "错误：无法获取 SDK 地址！"
+          echo "错误：无法获取 SDK 下载 URL！"
           exit 1
         fi
 
