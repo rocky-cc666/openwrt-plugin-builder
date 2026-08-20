@@ -1,0 +1,70 @@
+name: Build Theme
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache file g++ gawk gettext git \
+            libncurses5-dev libncursesw5-dev libssl-dev python3 python3-pip \
+            rsync unzip wget xsltproc zlib1g-dev zstd
+
+      - name: Download SDK
+        run: |
+          wget -q https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-sdk-25.12.5-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst -O sdk.tar.zst
+          tar --zstd -xf sdk.tar.zst
+          mv openwrt-sdk-* openwrt-sdk
+
+      - name: Verify SDK
+        run: |
+          cd openwrt-sdk
+          test -f Makefile
+
+      - name: Update feeds
+        run: |
+          cd openwrt-sdk
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Get theme
+        run: |
+          cd openwrt-sdk/package
+          git clone --depth 1 https://github.com/zzsj0928/luci-theme-liquid.git
+
+      - name: Config
+        run: |
+          cd openwrt-sdk
+          echo 'CONFIG_TARGET_armsr=y' > .config
+          echo 'CONFIG_TARGET_armsr_armv8=y' >> .config
+          echo 'CONFIG_TARGET_armsr_armv8_DEVICE_generic=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-theme-liquid=y' >> .config
+          echo 'CONFIG_USE_APK=y' >> .config
+          echo 'CONFIG_ALL_KMODS=n' >> .config
+          echo 'CONFIG_ALL_NONSHARED=n' >> .config
+          make defconfig
+
+      - name: Compile
+        run: |
+          cd openwrt-sdk
+          make package/luci-theme-liquid/compile -j$(nproc) V=s
+
+      - name: Collect
+        run: |
+          cd openwrt-sdk
+          find . -name "*.apk" -type f -exec cp -v {} ../ \;
+          cd ..
+          ls -lh *.apk
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-apk
+          path: "*.apk"
+          retention-days: 30
