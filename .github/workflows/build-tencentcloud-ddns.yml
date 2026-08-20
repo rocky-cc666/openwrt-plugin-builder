@@ -63,18 +63,20 @@ jobs:
 
     - name: 自动对齐包名并配置编译
       run: |
-        # 1. 查找包含 Makefile 的位置
-        MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE" -name "Makefile" -not -path "*/sdk/*" | head -n 1)
+        # 1. 忽略大小写查找 Makefile
+        MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE" -iname "makefile" -not -path "*/sdk/*" | head -n 1)
         
         if [ -z "$MAKEFILE_PATH" ]; then
-          echo "::error::未在仓库中查找到 Makefile 文件！"
+          echo "=== 仓库当前文件目录结构如下 ==="
+          find "$GITHUB_WORKSPACE" -maxdepth 3 -not -path "*/.git*" -not -path "*/sdk*"
+          echo "::error::仓库中未找到任何 Makefile 文件，请检查仓库根目录或子目录下是否存在 Makefile！"
           exit 1
         fi
 
         SRC_DIR=$(dirname "$MAKEFILE_PATH")
         echo "找到 Makefile 路径: $MAKEFILE_PATH"
 
-        # 2. 从 Makefile 中提取正确的 PKG_NAME
+        # 2. 从 Makefile 中提取 PKG_NAME
         PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
         if [ -z "$PKG_NAME" ]; then
           PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
@@ -86,7 +88,7 @@ jobs:
         echo "解析到真实 OpenWrt 包名为: $PKG_NAME"
         echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
 
-        # 3. 创建 SDK 对应的包目录并进行纯净复制
+        # 3. 创建目标目录并同步源码
         TARGET_DIR="$GITHUB_WORKSPACE/sdk/package/$PKG_NAME"
         mkdir -p "$TARGET_DIR"
         
@@ -96,10 +98,7 @@ jobs:
           --exclude='.github' \
           "$SRC_DIR/" "$TARGET_DIR/"
 
-        echo "=== 检查 $TARGET_DIR 内容 ==="
-        ls -la "$TARGET_DIR"
-
-        # 4. 配置 SDK feeds 和编译项
+        # 4. 配置 SDK 并写入编译目标
         cd "$GITHUB_WORKSPACE/sdk"
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
