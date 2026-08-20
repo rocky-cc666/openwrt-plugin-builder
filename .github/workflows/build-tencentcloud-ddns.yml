@@ -63,41 +63,49 @@ jobs:
 
     - name: 自动对齐包名并配置编译
       run: |
-        cd sdk
-        
-        # 1. 寻找源码中的真实 Makefile 所在目录
+        # 1. 在仓库中寻找包含 Makefile 的路径
         MAKEFILE_PATH=$(find "$GITHUB_WORKSPACE" -maxdepth 3 -name "Makefile" -not -path "*/sdk/*" | head -n 1)
         SRC_DIR=$(dirname "$MAKEFILE_PATH")
         
-        # 2. 从 Makefile 中提取正确的 OpenWrt Package 包名
+        # 2. 从 Makefile 解析出 PKG_NAME
         PKG_NAME=$(grep -E '^PKG_NAME:=' "$MAKEFILE_PATH" | cut -d'=' -f2 | tr -d ' \r\n')
         if [ -z "$PKG_NAME" ]; then
           PKG_NAME=$(grep -oE 'define Package/[a-zA-Z0-9_.-]+' "$MAKEFILE_PATH" | head -n 1 | cut -d'/' -f2)
         fi
+        if [ -z "$PKG_NAME" ]; then
+          PKG_NAME="tencentcloud-ddns"
+        fi
         
         echo "解析到真实 OpenWrt 包名为: $PKG_NAME"
-        
-        # 3. 将源码同步到与 PKG_NAME 严格同名的目录下
-        TARGET_DIR="package/$PKG_NAME"
-        mkdir -p "$TARGET_DIR"
-        rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_DIR/" "$TARGET_DIR/"
+        echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
 
-        # 4. 只更新安装必要的 feeds
+        # 3. 安全同步源码（使用临时隔离目录，防止循环递归）
+        TMP_PKG_DIR="/tmp/clean_plugin_src"
+        rm -rf "$TMP_PKG_DIR"
+        mkdir -p "$TMP_PKG_DIR"
+        
+        # 同步源码，严格剔除 sdk、.git、.github 目录
+        rsync -av --exclude='sdk' --exclude='.git' --exclude='.github' "$SRC_DIR/" "$TMP_PKG_DIR/"
+
+        # 移动到 SDK 的 package 目录
+        TARGET_DIR="$GITHUB_WORKSPACE/sdk/package/$PKG_NAME"
+        rm -rf "$TARGET_DIR"
+        mkdir -p "$TARGET_DIR"
+        cp -r "$TMP_PKG_DIR"/* "$TARGET_DIR/"
+        rm -rf "$TMP_PKG_DIR"
+
+        # 4. 在 SDK 中配置 feeds 与编译选项
+        cd "$GITHUB_WORKSPACE/sdk"
         ./scripts/feeds update -a
         ./scripts/feeds install -p packages -p luci
 
-        # 5. 生成配置文件并写入该包为编译目标 (m)
         make defconfig
         echo "CONFIG_PACKAGE_$PKG_NAME=m" >> .config
         make defconfig
 
-        # 保存环境变量传递给下一个 step
-        echo "PKG_NAME=$PKG_NAME" >> $GITHUB_ENV
-
     - name: 执行插件编译 (.apk)
       run: |
-        cd sdk
-        # 编译指定的 Package
+        cd "$GITHUB_WORKSPACE/sdk"
         make package/$PKG_NAME/compile V=s -j$(nproc)
 
     - name: 整理并上传 apk 安装包
