@@ -11,95 +11,116 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install APK Building Tools
+      - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y apk-tools wget tar
+          sudo apt-get install -y build-essential libncurses5-dev libncursesw5-dev zlib1g-dev gawk git ccache gettext xsltproc
 
-      - name: Build FRP & LuCI APK Packages
+      - name: Build FRP APK Packages for OpenWrt 25.12.5
         run: |
           FRP_VER="0.71.0"
-          ARCH="aarch64"
+          SDK_VER="25.12.5"
+          SDK_URL="https://downloads.openwrt.org/releases/${SDK_VER}/targets/rockchip/armv8/openwrt-sdk-${SDK_VER}-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.xz"
+
           WORK_DIR=$(pwd)
           OUT_DIR="${WORK_DIR}/output"
           mkdir -p "$OUT_DIR"
 
-          # 1. 下载 FRP 官方 binary
-          echo "Downloading FRP binary..."
+          # 1. 下载并解压 OpenWrt 25.12.5 SDK
+          wget -q "$SDK_URL" -O openwrt-sdk.tar.xz
+          tar -xf openwrt-sdk.tar.xz
+          SDK_DIR=$(find . -maxdepth 1 -type d -name "openwrt-sdk-*" | head -n 1)
+          cd "$SDK_DIR"
+
+          # 2. 手动编译并提供系统的 po2lmo 工具，彻底解决 po2lmo.c 报错问题
+          git clone --depth 1 https://github.com/openwrt/luci.git /tmp/luci
+          gcc -O2 /tmp/luci/modules/luci-base/src/po2lmo.c /tmp/luci/modules/luci-base/src/template_lmo.c -o staging_dir/host/bin/po2lmo || true
+
+          # 3. 更新并安装 Feeds
+          ./scripts/feeds update -a
+          ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
+
+          # 4. 创建二进制 FRP 客户端和服务端自定义包定义
+          mkdir -p package/custom/frpc package/custom/frps
+
+          cat << 'EOF' > package/custom/frpc/Makefile
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=frpc
+PKG_VERSION:=0.71.0
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/frpc
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=A fast reverse proxy client (v0.71.0 binary)
+  DEPENDS:=+libc
+endef
+
+define Build/Compile
+endef
+
+define Package/frpc/install
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/frpc $(1)/usr/bin/
+endef
+
+$(eval $(call BuildPackage,frpc))
+EOF
+
+          cat << 'EOF' > package/custom/frps/Makefile
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=frps
+PKG_VERSION:=0.71.0
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/frps
+  SECTION:=net
+  CATEGORY:=Network
+  TITLE:=A fast reverse proxy server (v0.71.0 binary)
+  DEPENDS:=+libc
+endef
+
+define Build/Compile
+endef
+
+define Package/frps/install
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/frps $(1)/usr/bin/
+endef
+
+$(eval $(call BuildPackage,frps))
+EOF
+
+          # 5. 下载 FRP 官方二进制文件并放置到源路径
           wget -q "https://github.com/fatedier/frp/releases/download/v${FRP_VER}/frp_${FRP_VER}_linux_arm64.tar.gz"
           tar -xzf "frp_${FRP_VER}_linux_arm64.tar.gz"
 
-          # --- 打包 frpc.apk ---
-          echo "Packaging frpc.apk..."
-          mkdir -p pkg_frpc/usr/bin pkg_frpc/lib/apk/db
-          cp "frp_${FRP_VER}_linux_arm64/frpc" pkg_frpc/usr/bin/
-          chmod +x pkg_frpc/usr/bin/frpc
+          mkdir -p package/custom/frpc/src package/custom/frps/src
+          cp "frp_${FRP_VER}_linux_arm64/frpc" package/custom/frpc/src/
+          cp "frp_${FRP_VER}_linux_arm64/frps" package/custom/frps/src/
+          echo 'all:' > package/custom/frpc/src/Makefile
+          echo 'all:' > package/custom/frps/src/Makefile
 
-          cat << EOF > pkg_frpc/.PKGINFO
-          pkgname = frpc
-          pkgver = ${FRP_VER}-r1
-          pkgdesc = A fast reverse proxy client (v0.71.0 binary for ARM64)
-          url = https://github.com/fatedier/frp
-          builddate = $(date +%s)
-          packager = GitHub Actions
-          size = $(du -sb pkg_frpc/usr/bin/frpc | awk '{print $1}')
-          arch = ${ARCH}
-          depend = libc
-          EOF
+          # 6. 写入 SDK 配置文件并更新配置
+          echo "CONFIG_PACKAGE_frpc=m" >> .config
+          echo "CONFIG_PACKAGE_frps=m" >> .config
+          echo "CONFIG_PACKAGE_luci-app-frpc=m" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-frpc-zh-cn=m" >> .config
+          make defconfig
 
-          cd pkg_frpc
-          tar -czf "$OUT_DIR/frpc_${FRP_VER}-r1_${ARCH}.apk" .PKGINFO usr/
-          cd "$WORK_DIR"
+          # 7. 编译生成安装包
+          make package/custom/frpc/compile V=s
+          make package/custom/frps/compile V=s
+          make package/feeds/luci/luci-app-frpc/compile V=s
 
-          # --- 打包 frps.apk ---
-          echo "Packaging frps.apk..."
-          mkdir -p pkg_frps/usr/bin pkg_frps/lib/apk/db
-          cp "frp_${FRP_VER}_linux_arm64/frps" pkg_frps/usr/bin/
-          chmod +x pkg_frps/usr/bin/frps
-
-          cat << EOF > pkg_frps/.PKGINFO
-          pkgname = frps
-          pkgver = ${FRP_VER}-r1
-          pkgdesc = A fast reverse proxy server (v0.71.0 binary for ARM64)
-          url = https://github.com/fatedier/frp
-          builddate = $(date +%s)
-          packager = GitHub Actions
-          size = $(du -sb pkg_frps/usr/bin/frps | awk '{print $1}')
-          arch = ${ARCH}
-          depend = libc
-          EOF
-
-          cd pkg_frps
-          tar -czf "$OUT_DIR/frps_${FRP_VER}-r1_${ARCH}.apk" .PKGINFO usr/
-          cd "$WORK_DIR"
-
-          # 2. 获取并打包 OpenWrt 官方 25.x 的 luci-app-frpc 和 中文界面
-          echo "Downloading LuCI App FRP files..."
-          git clone --depth 1 https://github.com/openwrt/luci.git /tmp/luci-src
-
-          # --- 打包 luci-app-frpc.apk ---
-          if [ -d "/tmp/luci-src/applications/luci-app-frpc/htdocs" ]; then
-            mkdir -p pkg_luci_frpc/www pkg_luci_frpc/usr/share/luci pkg_luci_frpc/etc/config pkg_luci_frpc/etc/init.d
-            
-            # 提取 UI 静态和动态资源文件
-            cp -r /tmp/luci-src/applications/luci-app-frpc/htdocs/* pkg_luci_frpc/www/ 2>/dev/null || true
-            cp -r /tmp/luci-src/applications/luci-app-frpc/root/* pkg_luci_frpc/ 2>/dev/null || true
-
-            cat << EOF > pkg_luci_frpc/.PKGINFO
-            pkgname = luci-app-frpc
-            pkgver = 1.0.0-r1
-            pkgdesc = LuCI Support for FRP Client
-            url = https://github.com/openwrt/luci
-            builddate = $(date +%s)
-            packager = GitHub Actions
-            arch = noarch
-            depend = frpc luci-base
-            EOF
-
-            cd pkg_luci_frpc
-            tar -czf "$OUT_DIR/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO * 2>/dev/null || true
-            cd "$WORK_DIR"
-          fi
+          # 8. 收集生成的 .apk 格式文件
+          find bin/ -name "*.apk" -exec cp {} "$OUT_DIR"/ \;
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
