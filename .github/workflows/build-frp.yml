@@ -1,4 +1,4 @@
-name: Build OpenWrt FRP APK Package
+name: Build OpenWrt FRP APK Package for R2S/E20C
 
 on:
   workflow_dispatch:
@@ -8,27 +8,10 @@ on:
         required: true
         default: '0.71.0'
         type: string
-      openwrt_branch:
-        description: 'OpenWrt LuCI Branch'
-        required: true
-        default: 'openwrt-23.05'
-        type: choice
-        options:
-          - 'openwrt-23.05'
-          - 'openwrt-22.03'
-          - 'master'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch:
-          - { name: aarch64, goarch: arm64, suffix: arm64 }
-          - { name: x86_64, goarch: amd64, suffix: amd64 }
-          - { name: armv7l, goarch: arm, suffix: arm }
-          - { name: mips64, goarch: mips64, suffix: mips64 }
-          - { name: mips, goarch: mips, suffix: mips }
 
     steps:
       - name: Checkout Repository
@@ -37,86 +20,38 @@ jobs:
       - name: Install APK Package Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y apk-tools wget tar git file
+          sudo apt-get install -y apk-tools wget tar git
 
       - name: Build FRP & LuCI APK Packages
         run: |
           FRP_VER="${{ github.event.inputs.frp_version }}"
-          OPENWRT_BRANCH="${{ github.event.inputs.openwrt_branch }}"
-          ARCH="${{ matrix.arch.name }}"
-          GOARCH="${{ matrix.arch.goarch }}"
-          SUFFIX="${{ matrix.arch.suffix }}"
+          # 为 R2S / E20C 锁定架构
+          ARCH="aarch64"
+          SUFFIX="arm64"
           WORK_DIR=$(pwd)
           OUT_DIR="${WORK_DIR}/output"
           mkdir -p "$OUT_DIR"
 
-          echo "Building for ARCH: ${ARCH}, GOARCH: ${GOARCH}, SUFFIX: ${SUFFIX}"
-          echo "FRP Version: ${FRP_VER}, OpenWrt Branch: ${OPENWRT_BRANCH}"
+          echo "Building for: R2S/E20C (${ARCH})"
+          echo "FRP Version: ${FRP_VER}"
 
-          # ==================== 1. 下载并验证 FRP 二进制文件 ====================
-          FRP_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VER}/frp_${FRP_VER}_linux_${SUFFIX}.tar.gz"
-          
-          echo "Downloading FRP from: ${FRP_URL}"
-          wget -q --show-progress "${FRP_URL}" -O "frp_${FRP_VER}_linux_${SUFFIX}.tar.gz"
-          
-          if [ ! -f "frp_${FRP_VER}_linux_${SUFFIX}.tar.gz" ]; then
-            echo "Error: Failed to download FRP binary for ${ARCH}"
-            exit 1
-          fi
-          
+          # 1. 下载 FRP 官方 ARM64 二进制文件
+          wget -q --show-progress "https://github.com/fatedier/frp/releases/download/v${FRP_VER}/frp_${FRP_VER}_linux_${SUFFIX}.tar.gz"
           tar -xzf "frp_${FRP_VER}_linux_${SUFFIX}.tar.gz"
           FRP_DIR="frp_${FRP_VER}_linux_${SUFFIX}"
-          
-          if [ ! -f "${FRP_DIR}/frpc" ] || [ ! -f "${FRP_DIR}/frps" ]; then
-            echo "Error: FRP binaries not found in archive"
-            exit 1
-          fi
 
-          # ==================== 2. 打包 frpc.apk ====================
-          echo "Building frpc.apk for ${ARCH}..."
+          # === 2. 打包 frpc.apk ===
           mkdir -p pkg_frpc/usr/bin pkg_frpc/etc/frp pkg_frpc/etc/init.d
 
-          # 复制二进制文件
           cp "${FRP_DIR}/frpc" pkg_frpc/usr/bin/
           chmod 755 pkg_frpc/usr/bin/frpc
-
-          # 创建默认配置文件
-          cat << 'EOF' > pkg_frpc/etc/frp/frpc.ini
-          [common]
-          server_addr = 127.0.0.1
-          server_port = 7000
-          token = your_token_here
-
-          [ssh]
-          type = tcp
-          local_ip = 127.0.0.1
-          local_port = 22
-          remote_port = 6000
-          EOF
-
-          # 创建初始化脚本
-          cat << 'EOF' > pkg_frpc/etc/init.d/frpc
-          #!/bin/sh /etc/rc.common
-          START=90
-          STOP=10
-          USE_PROCD=1
-
-          start_service() {
-            procd_open_instance
-            procd_set_param command /usr/bin/frpc
-            procd_set_param file /etc/frp/frpc.ini
-            procd_set_param respawn
-            procd_close_instance
-          }
-          EOF
-          chmod 755 pkg_frpc/etc/init.d/frpc
 
           # 创建 .PKGINFO
           BIN_SIZE=$(du -sb pkg_frpc/usr/bin/frpc | awk '{print $1}')
           cat << EOF > pkg_frpc/.PKGINFO
           pkgname = frpc
           pkgver = ${FRP_VER}-r1
-          pkgdesc = A fast reverse proxy client v${FRP_VER} for OpenWrt
+          pkgdesc = A fast reverse proxy client v${FRP_VER} for OpenWrt (R2S/E20C)
           url = https://github.com/fatedier/frp
           builddate = $(date +%s)
           packager = GitHub Actions
@@ -125,54 +60,21 @@ jobs:
           depend = libc
           EOF
 
-          # 打包
           cd pkg_frpc
           tar -czf "${OUT_DIR}/frpc_${FRP_VER}-r1_${ARCH}.apk" .PKGINFO etc/ usr/
           cd "${WORK_DIR}"
-          echo "✅ frpc.apk created successfully"
 
-          # ==================== 3. 打包 frps.apk ====================
-          echo "Building frps.apk for ${ARCH}..."
+          # === 3. 打包 frps.apk ===
           mkdir -p pkg_frps/usr/bin pkg_frps/etc/frp pkg_frps/etc/init.d
 
-          # 复制二进制文件
           cp "${FRP_DIR}/frps" pkg_frps/usr/bin/
           chmod 755 pkg_frps/usr/bin/frps
 
-          # 创建默认配置文件
-          cat << 'EOF' > pkg_frps/etc/frp/frps.ini
-          [common]
-          bind_port = 7000
-          bind_addr = 0.0.0.0
-          token = your_token_here
-          dashboard_port = 7500
-          dashboard_user = admin
-          dashboard_pwd = admin
-          EOF
-
-          # 创建初始化脚本
-          cat << 'EOF' > pkg_frps/etc/init.d/frps
-          #!/bin/sh /etc/rc.common
-          START=90
-          STOP=10
-          USE_PROCD=1
-
-          start_service() {
-            procd_open_instance
-            procd_set_param command /usr/bin/frps
-            procd_set_param file /etc/frp/frps.ini
-            procd_set_param respawn
-            procd_close_instance
-          }
-          EOF
-          chmod 755 pkg_frps/etc/init.d/frps
-
-          # 创建 .PKGINFO
           BIN_SIZE=$(du -sb pkg_frps/usr/bin/frps | awk '{print $1}')
           cat << EOF > pkg_frps/.PKGINFO
           pkgname = frps
           pkgver = ${FRP_VER}-r1
-          pkgdesc = A fast reverse proxy server v${FRP_VER} for OpenWrt
+          pkgdesc = A fast reverse proxy server v${FRP_VER} for OpenWrt (R2S/E20C)
           url = https://github.com/fatedier/frp
           builddate = $(date +%s)
           packager = GitHub Actions
@@ -181,201 +83,52 @@ jobs:
           depend = libc
           EOF
 
-          # 打包
           cd pkg_frps
           tar -czf "${OUT_DIR}/frps_${FRP_VER}-r1_${ARCH}.apk" .PKGINFO etc/ usr/
           cd "${WORK_DIR}"
-          echo "✅ frps.apk created successfully"
 
-          # ==================== 4. 构建 LuCI 界面 (仅 ARM64) ====================
-          if [ "${ARCH}" = "aarch64" ]; then
-            echo "Building LuCI app for FRP client..."
-            
-            # 克隆 LuCI 源码
-            git clone --depth 1 -b "${OPENWRT_BRANCH}" https://github.com/openwrt/luci.git /tmp/luci-src
-            
-            if [ ! -d "/tmp/luci-src" ]; then
-              echo "Warning: Failed to clone LuCI repository"
-            else
-              mkdir -p pkg_luci/usr/share/luci/menu.d \
-                       pkg_luci/usr/share/rpcd/acl.d \
-                       pkg_luci/www/luci-static/resources/view/frpc \
-                       pkg_luci/etc/config \
-                       pkg_luci/etc/init.d \
-                       pkg_luci/usr/lib/lua/luci/controller/frpc \
-                       pkg_luci/usr/lib/lua/luci/model/cbi/frpc \
-                       pkg_luci/usr/lib/lua/luci/view/frpc
+          # === 4. 构建 LuCI 界面 (使用 Lua API，兼容新版系统) ===
+          echo "Building LuCI app for FRP client..."
 
-              # 查找并复制 LuCI 文件
-              LUCI_APP_DIR="/tmp/luci-src/applications/luci-app-frpc"
-              
-              if [ -d "${LUCI_APP_DIR}" ]; then
-                echo "Found luci-app-frpc in ${OPENWRT_BRANCH}"
-                
-                # 复制 root 目录内容
-                if [ -d "${LUCI_APP_DIR}/root" ]; then
-                  cp -r ${LUCI_APP_DIR}/root/* pkg_luci/ 2>/dev/null || true
-                fi
-                
-                # 复制 htdocs 内容
-                if [ -d "${LUCI_APP_DIR}/htdocs" ]; then
-                  cp -r ${LUCI_APP_DIR}/htdocs/* pkg_luci/www/ 2>/dev/null || true
-                fi
-                
-                # 复制 luasrc 内容
-                if [ -d "${LUCI_APP_DIR}/luasrc" ]; then
-                  cp -r ${LUCI_APP_DIR}/luasrc/* pkg_luci/usr/lib/lua/luci/ 2>/dev/null || true
-                fi
-              else
-                echo "Warning: luci-app-frpc not found in ${OPENWRT_BRANCH}"
-                echo "Creating minimal LuCI configuration..."
-                
-                # 创建最小化的 LuCI 配置
-                cat << 'EOF' > pkg_luci/usr/lib/lua/luci/controller/frpc.lua
-                module("luci.controller.frpc", package.seeall)
-                
-                function index()
-                  if not nixio.fs.access("/usr/bin/frpc") then
-                    return
-                  end
-                  
-                  local page = entry({"admin", "services", "frpc"}, cbi("frpc"), _("FRP Client"), 60)
-                  page.dependent = true
-                  page.acl_depends = { "luci-app-frpc" }
-                end
-                EOF
-                
-                cat << 'EOF' > pkg_luci/usr/lib/lua/luci/model/cbi/frpc.lua
-                local m, s, o
-                m = Map("frpc", "FRP Client Configuration")
-                
-                s = m:section(TypedSection, "common", "Common Settings")
-                s.anonymous = true
-                
-                o = s:option(Value, "server_addr", "Server Address")
-                o.default = "127.0.0.1"
-                
-                o = s:option(Value, "server_port", "Server Port")
-                o.default = "7000"
-                o.datatype = "port"
-                
-                o = s:option(Value, "token", "Token")
-                
-                return m
-                EOF
-              fi
+          # 克隆社区修改版的 LuCI，兼容新版 OpenWrt 和 toml 配置
+          git clone --depth 1 https://github.com/superzjg/luci-app-frpc_frps.git /tmp/luci-app-frpc-repo
 
-              # 创建 LuCI 菜单项
-              cat << 'EOF' > pkg_luci/usr/share/luci/menu.d/luci-app-frpc.json
-              {
-                "admin/services/frpc": {
-                  "title": "FRP Client",
-                  "order": 60,
-                  "action": {
-                    "type": "view",
-                    "path": "frpc"
-                  },
-                  "depends": {
-                    "acl": ["luci-app-frpc"],
-                    "bin": ["frpc"]
-                  }
-                }
-              }
-              EOF
+          mkdir -p pkg_luci/usr/lib/lua/luci/controller \
+                   pkg_luci/usr/lib/lua/luci/model/cbi \
+                   pkg_luci/usr/lib/lua/luci/view \
+                   pkg_luci/www/luci-static/resources \
+                   pkg_luci/etc/config \
+                   pkg_luci/etc/init.d
 
-              # 创建 ACL 配置
-              cat << 'EOF' > pkg_luci/usr/share/rpcd/acl.d/luci-app-frpc.json
-              {
-                "luci-app-frpc": {
-                  "description": "Grant access to FRP Client configuration",
-                  "read": {
-                    "ubus": {
-                      "file": ["list", "read", "write"]
-                    },
-                    "uci": ["frpc"]
-                  },
-                  "write": {
-                    "ubus": {
-                      "file": ["write"]
-                    },
-                    "uci": ["frpc"]
-                  }
-                }
-              }
-              EOF
-
-              # 创建默认 UCI 配置文件
-              cat << 'EOF' > pkg_luci/etc/config/frpc
-              config common 'common'
-                option server_addr '127.0.0.1'
-                option server_port '7000'
-                option token ''
-              EOF
-
-              # 创建 .PKGINFO
-              cat << EOF > pkg_luci/.PKGINFO
-              pkgname = luci-app-frpc
-              pkgver = 1.0.0-r1
-              pkgdesc = LuCI Support for FRP Client (built from ${OPENWRT_BRANCH})
-              url = https://github.com/openwrt/luci
-              builddate = $(date +%s)
-              packager = GitHub Actions
-              arch = noarch
-              depend = frpc
-              EOF
-
-              # 打包
-              cd pkg_luci
-              find . -type f -not -name ".PKGINFO" | tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" -T - .PKGINFO
-              cd "${WORK_DIR}"
-              echo "✅ luci-app-frpc.apk created successfully"
-            fi
-          else
-            echo "Skipping LuCI build for ${ARCH} (only built for aarch64)"
+          if [ -d "/tmp/luci-app-frpc-repo/luasrc" ]; then
+            cp -r /tmp/luci-app-frpc-repo/luasrc/* pkg_luci/usr/lib/lua/luci/ 2>/dev/null || true
+          fi
+          if [ -d "/tmp/luci-app-frpc-repo/root" ]; then
+            cp -r /tmp/luci-app-frpc-repo/root/* pkg_luci/ 2>/dev/null || true
           fi
 
-          # ==================== 5. 生成包清单 ====================
-          echo "Generating package manifest..."
-          cat << EOF > "${OUT_DIR}/manifest.txt"
-          OpenWrt FRP Packages Build Report
-          ===================================
-          Build Date: $(date)
-          FRP Version: ${FRP_VER}
-          OpenWrt Branch: ${OPENWRT_BRANCH}
-          Architecture: ${ARCH}
-          --------------------------------
-          $(ls -lh ${OUT_DIR}/*.apk 2>/dev/null || echo "No packages found")
+          # 创建 .PKGINFO
+          cat << EOF > pkg_luci/.PKGINFO
+          pkgname = luci-app-frpc
+          pkgver = 1.0.0-r1
+          pkgdesc = LuCI Support for FRP Client (Lua, compatible with 25.12.5)
+          url = https://github.com/superzjg/luci-app-frpc_frps
+          builddate = $(date +%s)
+          packager = GitHub Actions
+          arch = noarch
+          depend = frpc
           EOF
 
-          # ==================== 6. 验证 APK 包 ====================
-          echo "Verifying APK packages..."
-          for apk in ${OUT_DIR}/*.apk; do
-            if [ -f "$apk" ]; then
-              if tar -tzf "$apk" > /dev/null 2>&1; then
-                echo "✅ Verified: $(basename $apk)"
-              else
-                echo "❌ Failed to verify: $(basename $apk)"
-              fi
-            fi
-          done
+          cd pkg_luci
+          tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/ www/ 2>/dev/null || true
+          cd "${WORK_DIR}"
 
-          echo "Build completed successfully!"
-          echo "Output directory: ${OUT_DIR}"
-          ls -la ${OUT_DIR}/
+          echo "✅ All packages built successfully!"
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-frp-packages-${{ matrix.arch.name }}
-          path: output/*.{apk,txt}
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload Combined Artifacts (Single Arch)
-        if: matrix.arch.name == 'aarch64'
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-frp-packages-complete
-          path: output/*.{apk,txt}
+          name: openwrt-25.12.5-frp-apk-r2s-e20c
+          path: output/*.apk
           if-no-files-found: error
           retention-days: 30
