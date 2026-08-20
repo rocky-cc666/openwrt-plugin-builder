@@ -1,0 +1,50 @@
+# .github/workflows/build-apk.yml
+name: Build Liquid Theme APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      openwrt_version:
+        description: 'OpenWrt version to build against (e.g., v24.10.0, v23.05.3)'
+        required: true
+        default: 'v24.10.0'
+        type: string
+      target_arch:
+        description: 'Target architecture (e.g., rockchip/armv8, x86/64)'
+        required: true
+        default: 'rockchip/armv8'
+        type: string
+  # 可选：如果你想每次提交都自动构建，取消下面注释
+  # push:
+  #   branches: [ "main" ]
+
+env:
+  PACKAGE_NAME: luci-theme-liquid   # 你的包名，必须与源码文件夹名一致
+  OPENWRT_VERSION: ${{ github.event.inputs.openwrt_version || 'v24.10.0' }}
+  TARGET_ARCH: ${{ github.event.inputs.target_arch || 'rockchip/armv8' }}
+  # 重要：要构建出 .apk 包，必须设置此标志
+  USE_APK: "y"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build OpenWrt Package
+        uses: openwrt/package-builder@main
+        with:
+          package: ${{ env.PACKAGE_NAME }}
+          openwrt-version: ${{ env.OPENWRT_VERSION }}
+          target: ${{ env.TARGET_ARCH }}
+          use-apk: ${{ env.USE_APK }}
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: liquid-theme-apk
+          path: |
+            **/*.apk
