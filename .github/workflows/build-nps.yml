@@ -224,10 +224,10 @@ jobs:
           # 先尝试使用 ipkg-build
           /tmp/ipkg-build -o root -g root ipk_npc "$OUT_DIR" 2>/dev/null || {
             echo "⚠️  ipkg-build 打包失败，尝试手动打包"
-            # 手动打包：先进入目录，再打包
+            # 手动打包：使用绝对路径
             PKG_NAME="npc_${NPC_VER}-r1_aarch64_generic.apk"
             cd ipk_npc
-            tar -czf "../${OUT_DIR}/${PKG_NAME}" ./*
+            tar -czf "${OUT_DIR}/${PKG_NAME}" ./*
             cd ..
             echo "✅ 手动打包完成: ${PKG_NAME}"
           }
@@ -338,7 +338,7 @@ jobs:
             echo "⚠️  ipkg-build 打包失败，尝试手动打包"
             PKG_NAME="luci-app-npc_1.0.0-r1_all.apk"
             cd ipk_luci
-            tar -czf "../${OUT_DIR}/${PKG_NAME}" ./*
+            tar -czf "${OUT_DIR}/${PKG_NAME}" ./*
             cd ..
             echo "✅ 手动打包完成: ${PKG_NAME}"
           }
