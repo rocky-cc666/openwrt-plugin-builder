@@ -126,7 +126,7 @@ jobs:
           #
           # because that installs every feed package definition.
 
-          ./scripts/feeds install luci
+          ./scripts/feeds install luci-base luci
 
 
       # ============================================================
@@ -316,6 +316,7 @@ jobs:
       # ============================================================
       # 10. IMPORTANT:
       #     Create a minimal SDK configuration
+      #     FIXED: Force disable all kernel modules
       # ============================================================
 
       - name: Configure minimal package build
@@ -344,7 +345,48 @@ jobs:
 
           cat .config
 
+          # Run defconfig to resolve platform defaults
           make defconfig
+
+          echo "============================================================"
+          echo "After defconfig - checking for kernel modules"
+          echo "============================================================"
+
+          # Count kernel modules before cleanup
+          KMOD_BEFORE=$(grep -c '^CONFIG_PACKAGE_kmod-' .config || true)
+          echo "Kernel modules before cleanup: $KMOD_BEFORE"
+
+          if [ "$KMOD_BEFORE" -gt 0 ]; then
+            echo "Kernel modules found, forcing them off..."
+            grep '^CONFIG_PACKAGE_kmod-' .config || true
+          fi
+
+          # Force disable ALL kernel modules
+          sed -i '/^CONFIG_PACKAGE_kmod-/d' .config
+
+          # Add explicit disable for any kmod that might be pulled in
+          echo "# Force disable all kernel modules" >> .config
+          echo "CONFIG_ALL_KMODS=n" >> .config
+
+          # Re-run defconfig to resolve dependencies without kmods
+          make defconfig
+
+          # Double-check: if any kmod reappeared, force them off again
+          # This can happen due to recursive dependencies
+          if grep -q '^CONFIG_PACKAGE_kmod-' .config; then
+            echo "WARNING: Some kernel modules reappeared, forcing them off again..."
+            sed -i '/^CONFIG_PACKAGE_kmod-/d' .config
+            make defconfig
+          fi
+
+          # Final verification
+          KMOD_AFTER=$(grep -c '^CONFIG_PACKAGE_kmod-' .config || true)
+
+          if [ "$KMOD_AFTER" -gt 0 ]; then
+            echo "ERROR: $KMOD_AFTER kernel modules are still selected:"
+            grep '^CONFIG_PACKAGE_kmod-' .config
+            exit 1
+          fi
 
           echo "============================================================"
           echo "Final relevant configuration"
@@ -353,11 +395,14 @@ jobs:
           grep -E \
             'CONFIG_(ALL|ALL_KMODS|ALL_NONSHARED|AUTOREMOVE|PACKAGE_luci-app-tencentddns)' \
             .config \
-            || true
+            | grep -v '^#' || true
+
+          echo "✓ All kernel modules have been disabled successfully."
 
 
       # ============================================================
       # 11. Verify that unrelated kernel modules are NOT selected
+      #     FIXED: Check for ANY kernel modules, not just rtl8366-smi
       # ============================================================
 
       - name: Verify minimal package configuration
@@ -366,36 +411,33 @@ jobs:
         run: |
           set -eux
 
-          if grep -q \
-            '^CONFIG_PACKAGE_kmod-switch-rtl8366-smi=' \
-            .config; then
-
-            echo "ERROR: kmod-switch-rtl8366-smi is selected."
-
-            grep \
-              '^CONFIG_PACKAGE_kmod-switch-rtl8366-smi=' \
-              .config
-
+          # Check if any kernel module is selected
+          if grep -q '^CONFIG_PACKAGE_kmod-' .config; then
+            echo "ERROR: Kernel modules are still selected:"
+            grep '^CONFIG_PACKAGE_kmod-' .config
             exit 1
           fi
 
-          if grep -q \
-            '^CONFIG_ALL_KMODS=y' \
-            .config; then
-
+          if grep -q '^CONFIG_ALL_KMODS=y' .config; then
             echo "ERROR: CONFIG_ALL_KMODS=y"
             exit 1
           fi
 
-          if grep -q \
-            '^CONFIG_ALL_NONSHARED=y' \
-            .config; then
-
+          if grep -q '^CONFIG_ALL_NONSHARED=y' .config; then
             echo "ERROR: CONFIG_ALL_NONSHARED=y"
             exit 1
           fi
 
-          echo "Minimal package configuration verified."
+          # Verify our target package is set to build as module
+          if ! grep -q '^CONFIG_PACKAGE_luci-app-tencentddns=m' .config; then
+            echo "ERROR: CONFIG_PACKAGE_luci-app-tencentddns is not set to 'm'"
+            grep '^CONFIG_PACKAGE_luci-app-tencentddns' .config || echo "Not found"
+            exit 1
+          fi
+
+          echo "✓ Minimal package configuration verified successfully."
+          echo "  - No kernel modules selected"
+          echo "  - Target package configured as module"
 
 
       # ============================================================
