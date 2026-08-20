@@ -67,51 +67,51 @@ jobs:
           chmod 755 pkg_frpc/usr/bin/frpc
 
           # 创建默认 TOML 配置文件
-          cat > pkg_frpc/etc/frp/frpc.toml << 'FRPC_CONFIG'
-          serverAddr = "127.0.0.1"
-          serverPort = 7000
-          auth.token = "your_token_here"
-
-          [[proxies]]
-          name = "ssh"
-          type = "tcp"
-          localIP = "127.0.0.1"
-          localPort = 22
-          remotePort = 6000
-          FRPC_CONFIG
+          printf '%s\n' \
+            'serverAddr = "127.0.0.1"' \
+            'serverPort = 7000' \
+            'auth.token = "your_token_here"' \
+            '' \
+            '[[proxies]]' \
+            'name = "ssh"' \
+            'type = "tcp"' \
+            'localIP = "127.0.0.1"' \
+            'localPort = 22' \
+            'remotePort = 6000' \
+            > pkg_frpc/etc/frp/frpc.toml
 
           # 创建 OpenWrt init 脚本
-          cat > pkg_frpc/etc/init.d/frpc << 'FRPC_INIT'
-          #!/bin/sh /etc/rc.common
-          START=90
-          STOP=10
-          USE_PROCD=1
-
-          start_service() {
-            procd_open_instance
-            procd_set_param command /usr/bin/frpc
-            procd_set_param file /etc/frp/frpc.toml
-            procd_set_param respawn
-            procd_set_param stdout 1
-            procd_set_param stderr 1
-            procd_close_instance
-          }
-          FRPC_INIT
+          printf '%s\n' \
+            '#!/bin/sh /etc/rc.common' \
+            'START=90' \
+            'STOP=10' \
+            'USE_PROCD=1' \
+            '' \
+            'start_service() {' \
+            '  procd_open_instance' \
+            '  procd_set_param command /usr/bin/frpc' \
+            '  procd_set_param file /etc/frp/frpc.toml' \
+            '  procd_set_param respawn' \
+            '  procd_set_param stdout 1' \
+            '  procd_set_param stderr 1' \
+            '  procd_close_instance' \
+            '}' \
+            > pkg_frpc/etc/init.d/frpc
           chmod 755 pkg_frpc/etc/init.d/frpc
 
           # 创建 .PKGINFO
           BIN_SIZE=$(du -sb pkg_frpc/usr/bin/frpc | awk '{print $1}')
-          cat > pkg_frpc/.PKGINFO << EOF
-          pkgname = frpc
-          pkgver = ${FRP_VER}-r1
-          pkgdesc = A fast reverse proxy client v${FRP_VER} for OpenWrt (R2S/E20C)
-          url = https://github.com/fatedier/frp
-          builddate = $(date +%s)
-          packager = GitHub Actions
-          size = ${BIN_SIZE}
-          arch = ${ARCH}
-          depend = libc
-          EOF
+          printf '%s\n' \
+            "pkgname = frpc" \
+            "pkgver = ${FRP_VER}-r1" \
+            "pkgdesc = A fast reverse proxy client v${FRP_VER} for OpenWrt (R2S/E20C)" \
+            "url = https://github.com/fatedier/frp" \
+            "builddate = $(date +%s)" \
+            "packager = GitHub Actions" \
+            "size = ${BIN_SIZE}" \
+            "arch = ${ARCH}" \
+            "depend = libc" \
+            > pkg_frpc/.PKGINFO
 
           cd pkg_frpc
           tar -czf "${OUT_DIR}/frpc_${FRP_VER}-r1_${ARCH}.apk" .PKGINFO etc/ usr/
@@ -128,46 +128,46 @@ jobs:
           chmod 755 pkg_frps/usr/bin/frps
 
           # 创建默认 TOML 配置文件
-          cat > pkg_frps/etc/frp/frps.toml << 'FRPS_CONFIG'
-          bindPort = 7000
-          auth.token = "your_token_here"
-          webServer.addr = "0.0.0.0"
-          webServer.port = 7500
-          webServer.user = "admin"
-          webServer.password = "admin"
-          FRPS_CONFIG
+          printf '%s\n' \
+            'bindPort = 7000' \
+            'auth.token = "your_token_here"' \
+            'webServer.addr = "0.0.0.0"' \
+            'webServer.port = 7500' \
+            'webServer.user = "admin"' \
+            'webServer.password = "admin"' \
+            > pkg_frps/etc/frp/frps.toml
 
           # 创建 OpenWrt init 脚本
-          cat > pkg_frps/etc/init.d/frps << 'FRPS_INIT'
-          #!/bin/sh /etc/rc.common
-          START=90
-          STOP=10
-          USE_PROCD=1
-
-          start_service() {
-            procd_open_instance
-            procd_set_param command /usr/bin/frps
-            procd_set_param file /etc/frp/frps.toml
-            procd_set_param respawn
-            procd_set_param stdout 1
-            procd_set_param stderr 1
-            procd_close_instance
-          }
-          FRPS_INIT
+          printf '%s\n' \
+            '#!/bin/sh /etc/rc.common' \
+            'START=90' \
+            'STOP=10' \
+            'USE_PROCD=1' \
+            '' \
+            'start_service() {' \
+            '  procd_open_instance' \
+            '  procd_set_param command /usr/bin/frps' \
+            '  procd_set_param file /etc/frp/frps.toml' \
+            '  procd_set_param respawn' \
+            '  procd_set_param stdout 1' \
+            '  procd_set_param stderr 1' \
+            '  procd_close_instance' \
+            '}' \
+            > pkg_frps/etc/init.d/frps
           chmod 755 pkg_frps/etc/init.d/frps
 
           BIN_SIZE=$(du -sb pkg_frps/usr/bin/frps | awk '{print $1}')
-          cat > pkg_frps/.PKGINFO << EOF
-          pkgname = frps
-          pkgver = ${FRP_VER}-r1
-          pkgdesc = A fast reverse proxy server v${FRP_VER} for OpenWrt (R2S/E20C)
-          url = https://github.com/fatedier/frp
-          builddate = $(date +%s)
-          packager = GitHub Actions
-          size = ${BIN_SIZE}
-          arch = ${ARCH}
-          depend = libc
-          EOF
+          printf '%s\n' \
+            "pkgname = frps" \
+            "pkgver = ${FRP_VER}-r1" \
+            "pkgdesc = A fast reverse proxy server v${FRP_VER} for OpenWrt (R2S/E20C)" \
+            "url = https://github.com/fatedier/frp" \
+            "builddate = $(date +%s)" \
+            "packager = GitHub Actions" \
+            "size = ${BIN_SIZE}" \
+            "arch = ${ARCH}" \
+            "depend = libc" \
+            > pkg_frps/.PKGINFO
 
           cd pkg_frps
           tar -czf "${OUT_DIR}/frps_${FRP_VER}-r1_${ARCH}.apk" .PKGINFO etc/ usr/
@@ -181,9 +181,14 @@ jobs:
           
           # 尝试克隆 LuCI FRP 应用
           echo "Attempting to clone LuCI FRP repository..."
-          git clone --depth 1 https://github.com/superzjg/luci-app-frpc_frps.git /tmp/luci-app-repo 2>/dev/null || \
-          git clone --depth 1 https://github.com/kuoruan/luci-app-frpc.git /tmp/luci-app-repo 2>/dev/null || \
-          echo "⚠️  Using built-in minimal LuCI configuration"
+          if git clone --depth 1 https://github.com/superzjg/luci-app-frpc_frps.git /tmp/luci-app-repo 2>/dev/null; then
+            echo "✅ LuCI repository cloned successfully from superzjg"
+          elif git clone --depth 1 https://github.com/kuoruan/luci-app-frpc.git /tmp/luci-app-repo 2>/dev/null; then
+            echo "✅ LuCI repository cloned successfully from kuoruan"
+          else
+            echo "⚠️  Failed to clone LuCI repository, using built-in configuration"
+            mkdir -p /tmp/luci-app-repo
+          fi
 
           mkdir -p pkg_luci/usr/lib/lua/luci/controller \
                    pkg_luci/usr/lib/lua/luci/model/cbi \
@@ -193,79 +198,79 @@ jobs:
                    pkg_luci/etc/init.d
 
           # 如果克隆成功，复制 LuCI 文件
-          if [ -d "/tmp/luci-app-repo" ] && [ -d "/tmp/luci-app-repo/.git" ]; then
-            echo "✅ LuCI repository cloned successfully"
+          if [ -d "/tmp/luci-app-repo" ] && [ -f "/tmp/luci-app-repo/README.md" 2>/dev/null ]; then
+            echo "Copying LuCI files from repository..."
             if [ -d "/tmp/luci-app-repo/luasrc" ]; then
               cp -r /tmp/luci-app-repo/luasrc/* pkg_luci/usr/lib/lua/luci/ 2>/dev/null || true
             fi
             if [ -d "/tmp/luci-app-repo/root" ]; then
               cp -r /tmp/luci-app-repo/root/* pkg_luci/ 2>/dev/null || true
             fi
-          else
-            echo "ℹ️  Cloning failed, using minimal LuCI configuration"
           fi
 
-          # 创建最小化的 LuCI 界面
+          # 创建 LuCI 控制器（如果不存在）
           if [ ! -f "pkg_luci/usr/lib/lua/luci/controller/frpc.lua" ]; then
-            echo "Creating minimal LuCI configuration..."
-            mkdir -p pkg_luci/usr/lib/lua/luci/controller
-            cat > pkg_luci/usr/lib/lua/luci/controller/frpc.lua << 'LUCI_CONTROLLER'
-            module("luci.controller.frpc", package.seeall)
-            
-            function index()
-              if not nixio.fs.access("/usr/bin/frpc") then
-                return
-              end
-              local page = entry({"admin", "services", "frpc"}, cbi("frpc"), _("FRP Client"), 60)
-              page.dependent = true
-              page.acl_depends = { "luci-app-frpc" }
-            end
-            LUCI_CONTROLLER
-            
-            mkdir -p pkg_luci/usr/lib/lua/luci/model/cbi
-            cat > pkg_luci/usr/lib/lua/luci/model/cbi/frpc.lua << 'LUCI_MODEL'
-            local m, s, o
-            m = Map("frpc", "FRP Client Configuration")
-            
-            s = m:section(TypedSection, "common", "Common Settings")
-            s.anonymous = true
-            
-            o = s:option(Value, "serverAddr", "Server Address")
-            o.default = "127.0.0.1"
-            
-            o = s:option(Value, "serverPort", "Server Port")
-            o.default = "7000"
-            o.datatype = "port"
-            
-            o = s:option(Value, "token", "Token")
-            o.password = true
-            
-            return m
-            LUCI_MODEL
+            echo "Creating LuCI controller..."
+            printf '%s\n' \
+              'module("luci.controller.frpc", package.seeall)' \
+              '' \
+              'function index()' \
+              '  if not nixio.fs.access("/usr/bin/frpc") then' \
+              '    return' \
+              '  end' \
+              '  local page = entry({"admin", "services", "frpc"}, cbi("frpc"), _("FRP Client"), 60)' \
+              '  page.dependent = true' \
+              '  page.acl_depends = { "luci-app-frpc" }' \
+              'end' \
+              > pkg_luci/usr/lib/lua/luci/controller/frpc.lua
+          fi
+
+          # 创建 LuCI 模型（如果不存在）
+          if [ ! -f "pkg_luci/usr/lib/lua/luci/model/cbi/frpc.lua" ]; then
+            echo "Creating LuCI model..."
+            printf '%s\n' \
+              'local m, s, o' \
+              'm = Map("frpc", "FRP Client Configuration")' \
+              '' \
+              's = m:section(TypedSection, "common", "Common Settings")' \
+              's.anonymous = true' \
+              '' \
+              'o = s:option(Value, "serverAddr", "Server Address")' \
+              'o.default = "127.0.0.1"' \
+              '' \
+              'o = s:option(Value, "serverPort", "Server Port")' \
+              'o.default = "7000"' \
+              'o.datatype = "port"' \
+              '' \
+              'o = s:option(Value, "token", "Token")' \
+              'o.password = true' \
+              '' \
+              'return m' \
+              > pkg_luci/usr/lib/lua/luci/model/cbi/frpc.lua
           fi
 
           # 创建默认 UCI 配置文件
-          cat > pkg_luci/etc/config/frpc << 'UCI_CONFIG'
-          config common 'common'
-            option serverAddr '127.0.0.1'
-            option serverPort '7000'
-            option token ''
-          UCI_CONFIG
+          printf '%s\n' \
+            'config common "common"' \
+            '  option serverAddr "127.0.0.1"' \
+            '  option serverPort "7000"' \
+            '  option token ""' \
+            > pkg_luci/etc/config/frpc
 
           # 创建 .PKGINFO
-          cat > pkg_luci/.PKGINFO << EOF
-          pkgname = luci-app-frpc
-          pkgver = 1.0.0-r1
-          pkgdesc = LuCI Support for FRP Client (compatible with OpenWrt 25.12.5)
-          url = https://github.com/openwrt/luci
-          builddate = $(date +%s)
-          packager = GitHub Actions
-          arch = noarch
-          depend = frpc
-          EOF
+          printf '%s\n' \
+            'pkgname = luci-app-frpc' \
+            'pkgver = 1.0.0-r1' \
+            'pkgdesc = LuCI Support for FRP Client (compatible with OpenWrt 25.12.5)' \
+            'url = https://github.com/openwrt/luci' \
+            "builddate = $(date +%s)" \
+            'packager = GitHub Actions' \
+            'arch = noarch' \
+            'depend = frpc' \
+            > pkg_luci/.PKGINFO
 
           cd pkg_luci
-          if [ -d "www" ]; then
+          if [ -d "www" ] && [ "$(ls -A www 2>/dev/null)" ]; then
             tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/ www/
           else
             tar -czf "${OUT_DIR}/luci-app-frpc_1.0.0-r1_all.apk" .PKGINFO etc/ usr/
