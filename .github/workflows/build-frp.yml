@@ -1,4 +1,4 @@
-name: Build OpenWrt FRP APK Plugins
+name: Build OpenWrt FRP APK Package
 
 on:
   workflow_dispatch:
@@ -11,6 +11,11 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gettext build-essential libncurses5-dev libncursesw5-dev zlib1g-dev gawk git ccache gettext xsltproc
+
       - name: Build FRP APK Packages for OpenWrt 25.12.5
         run: |
           FRP_VER="0.71.0"
@@ -21,21 +26,23 @@ jobs:
           OUT_DIR="${WORK_DIR}/output"
           mkdir -p "$OUT_DIR"
 
-          # 1. 下载并解压 OpenWrt 25.12.5 SDK
-          echo "Downloading OpenWrt $SDK_VER SDK..."
+          # 1. 下载并解压 25.12.5 SDK
           wget -q "$SDK_URL" -O openwrt-sdk.tar.xz
           tar -xf openwrt-sdk.tar.xz
           SDK_DIR=$(find . -maxdepth 1 -type d -name "openwrt-sdk-*" | head -n 1)
           cd "$SDK_DIR"
 
-          # 2. 更新并安装 Feeds 源
+          # 2. 更新并安装 Feeds
           ./scripts/feeds update -a
-          ./scripts/feeds install luci-app-frpc luci-i18n-frpc-zh-cn
+          ./scripts/feeds install -a
 
-          # 3. 创建二进制 FRP 客户端/服务端自定义软件包定义 (符合 APK 构建标准)
-          
-          # 创建 frpc 软件包定义
-          mkdir -p package/custom/frpc
+          # 3. 预先编译 po2lmo 等核心 Host 工具，防止报错 po2lmo: command not found
+          make package/luci-base/host/compile V=s || true
+
+          # 4. 创建自定义 FRP 客户端和服务端 Package
+          mkdir -p package/custom/frpc package/custom/frps
+
+          # 创建 frpc Makefile
           cat << 'EOF' > package/custom/frpc/Makefile
 include $(TOPDIR)/rules.mk
 
@@ -63,8 +70,7 @@ endef
 $(eval $(call BuildPackage,frpc))
 EOF
 
-          # 创建 frps 软件包定义
-          mkdir -p package/custom/frps
+          # 创建 frps Makefile
           cat << 'EOF' > package/custom/frps/Makefile
 include $(TOPDIR)/rules.mk
 
@@ -92,31 +98,29 @@ endef
 $(eval $(call BuildPackage,frps))
 EOF
 
-          # 4. 下载 FRP 官方二进制文件并放置到编译源目录
+          # 5. 下载 FRP 预编译二进制文件
           wget -q "https://github.com/fatedier/frp/releases/download/v${FRP_VER}/frp_${FRP_VER}_linux_arm64.tar.gz"
           tar -xzf "frp_${FRP_VER}_linux_arm64.tar.gz"
-          
-          mkdir -p "package/custom/frpc/src"
-          cp "frp_${FRP_VER}_linux_arm64/frpc" "package/custom/frpc/src/"
+
+          mkdir -p package/custom/frpc/src package/custom/frps/src
+          cp "frp_${FRP_VER}_linux_arm64/frpc" package/custom/frpc/src/
+          cp "frp_${FRP_VER}_linux_arm64/frps" package/custom/frps/src/
           echo 'all:' > package/custom/frpc/src/Makefile
-          
-          mkdir -p "package/custom/frps/src"
-          cp "frp_${FRP_VER}_linux_arm64/frps" "package/custom/frps/src/"
           echo 'all:' > package/custom/frps/src/Makefile
 
-          # 5. 配置编译目标，开启 APK 格式打包
+          # 6. 配置编译参数（生成 APK）
           echo "CONFIG_PACKAGE_frpc=m" >> .config
           echo "CONFIG_PACKAGE_frps=m" >> .config
           echo "CONFIG_PACKAGE_luci-app-frpc=m" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-frpc-zh-cn=m" >> .config
           make defconfig
 
-          # 6. 执行编译
+          # 7. 编译软件包
           make package/custom/frpc/compile V=s
-          make package/custom/frpc/compile V=s
+          make package/custom/frps/compile V=s
           make package/feeds/luci/luci-app-frpc/compile V=s
 
-          # 7. 收集生成的 .apk 文件
+          # 8. 收集所有生成的 .apk 安装包
           find bin/ -name "*.apk" -exec cp {} "$OUT_DIR"/ \;
 
       - name: Upload APK Artifacts
